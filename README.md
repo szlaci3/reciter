@@ -61,6 +61,8 @@ When the PC is off, the hosted website continues with the phone voice. This does
 
 ## Verification
 
+On Windows the service uses Python's selector event loop to avoid the Proactor socket-cleanup traceback (`ConnectionResetError: WinError 10054`) seen after a remote connection closes. Exceptions are not globally suppressed. Restart the PC service after updating to activate this change.
+
 ```powershell
 node --test speech.test.js edge-speech.test.js
 .\.venv\Scripts\python.exe -m unittest test_server -v

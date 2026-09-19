@@ -1,7 +1,7 @@
 """Explicit live check: sends only the sample below to Microsoft, never user text."""
 import asyncio
 from aiohttp.test_utils import TestClient, TestServer
-from server import create_app
+from server import create_app, create_server_loop
 
 
 async def main():
@@ -23,4 +23,4 @@ async def main():
         print(f'Live synthesis passed: {voice}, {len(audio)} audio bytes.')
 
 
-asyncio.run(main())
+asyncio.run(main(), loop_factory=create_server_loop)

@@ -6,12 +6,23 @@ import math
 from pathlib import Path
 import secrets
 import string
+import sys
 
 from aiohttp import web
 import edge_tts
 
 ROOT = Path(__file__).resolve().parent
 FRONTEND = ('index.html', 'style.css', 'speech.js', 'edge-speech.js', 'app.js')
+
+
+def create_server_loop():
+    # Python 3.13's Windows Proactor transport can raise during shutdown()
+    # after a peer resets a socket, interrupting the rest of its cleanup.
+    # This HTTP/WebSocket service needs no subprocess or pipe transports.
+    # Use the socket-based selector loop instead of suppressing exceptions.
+    if sys.platform == 'win32':
+        return asyncio.SelectorEventLoop()
+    return asyncio.new_event_loop()
 
 
 def load_access_key(path):
@@ -122,4 +133,5 @@ if __name__ == '__main__':
     token = load_access_key(token_file)
     print(f'PC access key (paste into Reciter): {token}')
     print('Open http://<PC-LAN-IP>:' + str(args.port) + ' on your phone, on the same Wi-Fi.')
-    web.run_app(create_app(token, args.origin), host=args.host, port=args.port, access_log=None)
+    web.run_app(create_app(token, args.origin), host=args.host, port=args.port,
+                access_log=None, loop=create_server_loop())
