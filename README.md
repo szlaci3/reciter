@@ -35,6 +35,10 @@ Switching source stops playback; press Play to restart the current passage with 
 
 The server keeps up to 100 generated segments in memory, keyed by text, voice, and speed. Restarting the server clears this cache. It does not save user audio or text to disk. Browser voices themselves may require internet.
 
+While Edge audio plays, the browser prepares one upcoming segment, including the first segment of the next passage. At the boundary it reuses that request or completed audio instead of starting a new request. This is intended to reduce the reported 2–3-second loading gaps between 7–12-second chunks. The first segment still needs loading time; slow preparation can still cause a wait. The configured passage pause remains. Stop, navigation, and text/source changes discard the buffer; changed voice, speed, or connection settings prevent reuse of mismatched audio. A failed preparation leaves current audio playing and triggers phone fallback only if that failed segment is subsequently needed.
+
+This change awaits a phone listening check. It does not provide sample-accurate gapless playback: each chunk is still a separate audio source, so iOS controls may briefly change at boundaries and mid-sentence intonation may remain. Document length increases the number of boundaries, not the amount of text sent in each request.
+
 Mobile browsers can require another tap before audio starts, including after an asynchronous fallback. If playback is blocked, tap Play again or select Phone voice only. Where supported, Media Session play/pause controls use the same functions as the buttons. Edge audio play/pause events also synchronize the UI when the headset controls the audio directly. Resume does not replace the audio source or request the segment again. Double-tap Next/Previous mapping is deferred. Screen locking and longer background sessions still need device testing.
 
 User-verified behavior on the tested phone differs by speech source:

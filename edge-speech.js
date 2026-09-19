@@ -50,8 +50,9 @@
       this.mode = null;
       this.paused = false;
       this.generation++;
-      this.controller?.abort();
-      clearTimeout(this.timeout);
+      this.request?.abort();
+      this.request = null;
+      this.discardPrepared();
       this.audio.onended = this.audio.onerror = null;
       this.audio.pause();
       this.audio.removeAttribute('src');
@@ -95,7 +96,41 @@
       try { this.native.speak(utterance); if (this.paused) this.native.pause(); }
       catch { utterance.onerror({ error: 'Phone speech failed. Tap Play or choose another phone voice.' }); }
     }
-    async speak(utterance) {
+    audioKey(utterance, c) {
+      return JSON.stringify([c.url, c.key, c.edgeVoice, utterance.text, utterance.rate]);
+    }
+    requestAudio(utterance, c) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 12000);
+      const request = {
+        key: this.audioKey(utterance, c),
+        abort() { clearTimeout(timeout); controller.abort(); }
+      };
+      // Store failures as results so speculative requests never reject unhandled.
+      request.result = (async () => {
+        try {
+          if (!c.url || !c.key || !c.edgeVoice) throw new Error('Configure and connect the PC first.');
+          const base = new URL(c.url);
+          if (!['http:', 'https:'].includes(base.protocol)) throw new Error('Use an HTTP or HTTPS PC address.');
+          if (root.location?.protocol === 'https:' && base.protocol !== 'https:') throw new Error('The hosted page needs an HTTPS PC address.');
+          const response = await this.fetcher(c.url.replace(/\/$/, '') + '/api/speech', {
+            method: 'POST', signal: controller.signal,
+            headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + c.key },
+            body: JSON.stringify({ text: utterance.text, voice: c.edgeVoice, rate: utterance.rate })
+          });
+          if (!response.ok) throw new Error('PC speech request failed (' + response.status + ').');
+          return { blob: await response.blob() };
+        } catch (error) {
+          return { error };
+        } finally { clearTimeout(timeout); }
+      })();
+      return request;
+    }
+    discardPrepared() {
+      this.prepared?.abort();
+      this.prepared = null;
+    }
+    async speak(utterance, next) {
       this.clearReturnCheck();
       const token = ++this.generation;
       this.mode = 'loading';
@@ -104,36 +139,31 @@
       const fallback = reason => {
         if (fellBack || token !== this.generation) return;
         fellBack = true;
+        this.discardPrepared();
         this.mode = 'browser';
         this.audio.onended = this.audio.onerror = null;
         this.audio.pause();
         this.failed = true;
         this.browser(utterance, reason);
       };
-      const c = this.config();
+      const c = { ...this.config() };
       if (c.source === 'browser' || this.failed) {
+        this.discardPrepared();
         this.browser(utterance, c.source === 'browser' ? 'Phone voice selected.' : 'PC speech unavailable.');
         return;
       }
-      this.controller = new AbortController();
-      this.timeout = setTimeout(() => this.controller.abort(), 12000);
       try {
-        if (!c.url || !c.key || !c.edgeVoice) throw new Error('Configure and connect the PC first.');
-        const base = new URL(c.url);
-        if (!['http:', 'https:'].includes(base.protocol)) throw new Error('Use an HTTP or HTTPS PC address.');
-        if (root.location?.protocol === 'https:' && base.protocol !== 'https:') throw new Error('The hosted page needs an HTTPS PC address.');
         this.report('Preparing Edge audio…');
-        const response = await this.fetcher(c.url.replace(/\/$/, '') + '/api/speech', {
-          method: 'POST', signal: this.controller.signal,
-          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + c.key },
-          body: JSON.stringify({ text: utterance.text, voice: c.edgeVoice, rate: utterance.rate })
-        });
-        if (!response.ok) throw new Error('PC speech request failed (' + response.status + ').');
-        const blob = await response.blob();
+        if (this.prepared?.key !== this.audioKey(utterance, c)) this.discardPrepared();
+        const request = this.prepared || this.requestAudio(utterance, c);
+        this.prepared = null;
+        this.request = request;
+        const result = await request.result;
+        if (this.request === request) this.request = null;
         if (token !== this.generation) return;
-        clearTimeout(this.timeout);
+        if (result.error) throw result.error;
         if (this.url) URL.revokeObjectURL(this.url);
-        this.url = URL.createObjectURL(blob);
+        this.url = URL.createObjectURL(result.blob);
         this.audio.src = this.url;
         this.mode = 'edge';
         this.audio.onended = () => {
@@ -145,10 +175,13 @@
           fallback('Edge audio could not play.');
         };
         if (!this.paused) await this.audio.play();
-        if (token === this.generation && !fellBack) this.report('Edge · ' + c.edgeVoice);
+        if (token === this.generation && !fellBack) {
+          this.report('Edge · ' + c.edgeVoice);
+          // Only one upcoming chunk is retained; do not delay the first audio.
+          if (next) this.prepared = this.requestAudio(next, c);
+        }
       } catch (error) {
         if (token !== this.generation) return;
-        clearTimeout(this.timeout);
         // Pausing while play() is pending can reject it with AbortError.
         if (error.name === 'AbortError' && this.mode === 'edge' && this.paused) return;
         if (error.name === 'NotAllowedError') {

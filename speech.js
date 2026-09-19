@@ -81,7 +81,10 @@
         this.invalidate(); this.state = 'error'; this.update(event.error || 'unknown');
       };
       this.state = 'speaking'; this.update();
-      try { this.synth.speak(utterance); } catch { utterance.onerror({ error: 'speech unavailable' }); }
+      const nextText = parts[this.part + 1] ?? (this.index + 1 < this.items.length
+        ? segments(this.items[this.index + 1])[0] : null);
+      const next = nextText ? { text: nextText, rate: settings.rate } : null;
+      try { this.synth.speak(utterance, next); } catch { utterance.onerror({ error: 'speech unavailable' }); }
     }
   }
   const api = { passages, segments, Player };

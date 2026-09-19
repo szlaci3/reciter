@@ -115,7 +115,8 @@ test('button and headset pause/resume retain audio position and synchronize play
   assert.equal(displayedState, 'paused');
   player.play();
   assert.equal(displayedState, 'speaking'); assert.equal(f.audio.paused, false);
-  assert.equal(f.audio.currentTime, 1.234); assert.equal(f.audio.src, source); assert.equal(requests, 1);
+  assert.equal(f.audio.currentTime, 1.234); assert.equal(f.audio.src, source);
+  assert.equal(requests, 2); // Current audio plus the next passage; resume adds no request.
   player.stop(); assert.equal(displayedState, 'idle');
   f.audio.onpause(); assert.equal(displayedState, 'idle');
 });
@@ -200,4 +201,125 @@ test('media error plus rejected play promise triggers fallback only once', async
   f.audio.play = async () => { f.audio.onerror(); throw new Error('Bad media'); };
   await f.engine.speak(f.utterance);
   assert.equal(f.spoken.length, 1); f.engine.cancel();
+});
+
+const tick = () => new Promise(setImmediate);
+const okAudio = () => ({ ok: true, blob: async () => new Blob(['audio']) });
+const nextUtterance = f => ({ ...f.utterance, text: 'The next chunk.' });
+
+test('next audio is fetched during playback and reused without a boundary request', async () => {
+  const requests = [];
+  const f = fixture((_, options) => new Promise(resolve => {
+    requests.push({ resolve, body: JSON.parse(options.body), signal: options.signal });
+  }));
+  const next = nextUtterance(f);
+  const first = f.engine.speak(f.utterance, next);
+  assert.equal(requests.length, 1); // Prioritize startup before prefetching.
+  requests[0].resolve(okAudio()); await first;
+  assert.equal(requests.length, 2); assert.equal(requests[1].body.text, next.text);
+  const source = f.audio.src;
+  requests[1].resolve(okAudio()); await tick();
+  assert.equal(f.audio.src, source); assert.equal(f.engine.mode, 'edge');
+  await f.engine.speak(next);
+  assert.equal(requests.length, 2); assert.notEqual(f.audio.src, source);
+  assert.equal(f.spoken.length, 0); f.engine.cancel();
+});
+
+test('an unfinished prefetch is reused and pausing the wait keeps its result silent', async () => {
+  let resolveNext, calls = 0;
+  const f = fixture(() => ++calls === 1 ? Promise.resolve(okAudio()) : new Promise(r => { resolveNext = r; }));
+  const next = nextUtterance(f);
+  await f.engine.speak(f.utterance, next);
+  f.audio.pause();
+  const pending = f.engine.speak(next);
+  f.engine.pause();
+  assert.equal(calls, 2);
+  resolveNext(okAudio()); await pending;
+  assert.equal(f.audio.paused, true); assert.equal(f.spoken.length, 0);
+  f.engine.resume(); assert.equal(f.audio.paused, false); f.engine.cancel();
+});
+
+test('cancel aborts prefetch and late completion cannot start or replace audio', async () => {
+  let resolveNext, nextSignal, calls = 0;
+  const f = fixture((_, options) => {
+    if (++calls === 1) return Promise.resolve(okAudio());
+    nextSignal = options.signal; return new Promise(r => { resolveNext = r; });
+  });
+  await f.engine.speak(f.utterance, nextUtterance(f));
+  f.engine.cancel();
+  assert.equal(nextSignal.aborted, true);
+  f.audio.play = () => assert.fail('Canceled prefetch must not play');
+  resolveNext(okAudio()); await tick();
+  assert.equal(f.engine.prepared, null); assert.equal(f.engine.url, null);
+  assert.equal(f.spoken.length, 0);
+});
+
+test('changed rate, voice, address, key or text never consumes stale prepared audio', async () => {
+  for (const change of ['rate', 'edgeVoice', 'url', 'key', 'text']) {
+    const bodies = [];
+    const f = fixture(async (_, options) => { bodies.push(JSON.parse(options.body)); return okAudio(); });
+    const next = nextUtterance(f);
+    await f.engine.speak(f.utterance, next);
+    if (change === 'rate') next.rate = 1.2;
+    else if (change === 'text') next.text = 'Edited material.';
+    else if (change === 'url') f.config.url = 'http://other-pc:8000';
+    else f.config[change] += 'changed';
+    await f.engine.speak(next);
+    assert.equal(bodies.length, 3, change);
+    assert.equal(bodies[2].text, next.text); assert.equal(bodies[2].rate, next.rate);
+    assert.equal(bodies[2].voice, f.config.edgeVoice); f.engine.cancel();
+  }
+});
+
+test('failed prefetch leaves current audio alone and falls back only when needed', async () => {
+  let calls = 0;
+  const f = fixture(async () => {
+    if (++calls === 1) return okAudio();
+    throw new Error('PC disconnected');
+  });
+  const next = nextUtterance(f);
+  await f.engine.speak(f.utterance, next); await tick();
+  assert.equal(f.engine.mode, 'edge'); assert.equal(f.engine.failed, false);
+  assert.equal(f.spoken.length, 0);
+  await f.engine.speak(next);
+  assert.equal(f.spoken.length, 1); assert.equal(f.spoken[0].text, next.text);
+  assert.equal(f.engine.failed, true); assert.equal(calls, 2); f.engine.cancel();
+});
+
+test('manual phone speech discards prepared audio and does not prefetch', async () => {
+  let calls = 0;
+  const f = fixture(async () => { calls++; return okAudio(); });
+  const next = nextUtterance(f);
+  await f.engine.speak(f.utterance, next);
+  f.config.source = 'browser';
+  await f.engine.speak(next, f.utterance);
+  assert.equal(calls, 2); assert.equal(f.engine.prepared, null);
+  assert.equal(f.spoken.length, 1); f.engine.cancel();
+});
+
+test('player prepares across chunks and passages while keeping the passage break and Replay', async () => {
+  const { Player, segments } = require('./speech.js');
+  const texts = [];
+  const f = fixture(async (_, options) => { texts.push(JSON.parse(options.body).text); return okAudio(); });
+  const pending = new Map(); let id = 0;
+  const timers = {
+    setTimeout(fn, delay) { assert.equal(delay, 2000); pending.set(++id, fn); return id; },
+    clearTimeout(key) { pending.delete(key); }
+  };
+  const player = new Player(f.engine, text => ({ text }), () => ({ rate: 1, gap: 2 }), () => {}, timers);
+  const paragraph = 'A useful sentence about the subject. '.repeat(9).trim();
+  const parts = segments(paragraph);
+  assert.equal(parts.length, 2);
+  player.setText(paragraph + '\n\nFinal passage.'); player.play(); await tick();
+  assert.deepEqual(texts, parts);
+  f.audio.onended(); await tick();
+  assert.deepEqual(texts, [...parts, 'Final passage.']);
+  const source = f.audio.src;
+  f.audio.onended();
+  assert.equal(player.state, 'waiting'); assert.equal(f.audio.src, source);
+  [...pending.values()][0](); await tick();
+  assert.equal(texts.length, 3); assert.notEqual(f.audio.src, source);
+  f.audio.onended(); assert.equal(player.state, 'ended');
+  player.play(); await tick();
+  assert.deepEqual(texts.slice(3), parts); assert.equal(player.index, 0); player.stop();
 });
