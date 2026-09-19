@@ -21,7 +21,7 @@
   function edgeSegments(text) {
     // Keep normal sentences intact. Bound requests below the server's 2000
     // character limit, even for pasted text without sentence punctuation.
-    const target = 600, limit = 1800;
+    const target = 300, limit = 900;
     const source = text.trim(), sentences = [];
     let start = 0;
     const endings = /[.!?]+(?:["'”’\)\]]|\[\d+(?:[–,\-]\d+)*\])*(?=\s|$)/g;

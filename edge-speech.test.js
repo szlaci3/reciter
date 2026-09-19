@@ -307,7 +307,7 @@ test('player prepares across chunks and passages while keeping the passage break
     clearTimeout(key) { pending.delete(key); }
   };
   const player = new Player(f.engine, text => ({ text }), () => ({ rate: 1, gap: 2 }), () => {}, timers);
-  const paragraph = 'A useful sentence about the subject. '.repeat(30).trim();
+  const paragraph = 'A useful sentence about the subject. '.repeat(15).trim();
   const parts = edgeSegments(paragraph);
   assert.equal(parts.length, 2);
   player.setText(paragraph + '\n\nFinal passage.'); player.play(); await tick();

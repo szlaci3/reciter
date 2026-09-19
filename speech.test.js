@@ -79,9 +79,18 @@ test('Edge bounds oversized and unpunctuated text without dropping content', () 
   for (const text of ['word '.repeat(1200).trim(), 'x'.repeat(5000), '😀'.repeat(2200),
     'A detailed clause, '.repeat(220).trim() + '.']) {
     const chunks = edgeSegments(text);
-    assert.ok(chunks.every(chunk => chunk.length > 0 && chunk.length <= 1800));
+    assert.ok(chunks.every(chunk => chunk.length > 0 && chunk.length <= 900));
     assert.equal(chunks.join('').replace(/\s/g, ''), text.replace(/\s/g, ''));
     assert.ok(chunks.every(chunk => !/[\uD800-\uDBFF]$/.test(chunk)));
   }
   assert.deepEqual(edgeSegments('   '), []);
+});
+
+test('Edge packs sentences up to 300 characters and splits long sentences at a clause after 450', () => {
+  const first = 'a'.repeat(148) + '.';
+  const second = 'b'.repeat(149) + '.';
+  assert.deepEqual(edgeSegments(first + ' ' + second + ' Last.'), [first + ' ' + second, 'Last.']);
+  const clause = 'word '.repeat(100).trim() + ',';
+  const remainder = 'more '.repeat(100).trim() + '.';
+  assert.deepEqual(edgeSegments(clause + ' ' + remainder), [clause, remainder]);
 });
