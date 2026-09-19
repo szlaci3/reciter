@@ -20,14 +20,23 @@ Choose a short passage you want to learn today. Listen once for the main idea, t
     </section>
     <section aria-labelledby="voice-heading">
       <h2 id="voice-heading">Make it comfortable</h2>
-      <label for="voice">Voice</label><select id="voice"><option value="">Loading voices…</option></select>
+      <label for="source">Speech source</label><select id="source"><option value="auto">Edge on PC · automatic phone fallback</option><option value="browser">Phone voice only</option></select>
+      <p id="connection" class="hint" role="status">Connect your PC to load Edge voices, or use the phone voice.</p>
+      <details><summary>PC connection</summary>
+        <label for="pc-url">PC service address</label><input id="pc-url" type="url" placeholder="http://192.168.1.10:8000" autocomplete="off">
+        <label for="pc-key">PC access key</label><input id="pc-key" type="password" autocomplete="off">
+        <p class="hint">The key appears when you start the PC service. It is kept for this tab’s session. A hosted HTTPS website needs an HTTPS PC address.</p>
+        <button id="connect">Connect / retry Edge</button>
+      </details>
+      <label for="edge-voice">Edge voice</label><select id="edge-voice"><option value="">Connect PC to load voices…</option></select>
+      <label for="voice">Phone / fallback voice</label><select id="voice"><option value="">Loading voices…</option></select>
       <p id="voice-note" class="hint"></p>
       <div class="settings">
         <label for="pitch">Pitch <output id="pitch-value" for="pitch">1.4</output><input id="pitch" type="range" min="0.5" max="2" step="0.1" value="1.4"></label>
         <label for="rate">Speed <output id="rate-value" for="rate">1.0×</output><input id="rate" type="range" min="0.5" max="1.5" step="0.1" value="1"></label>
         <label for="gap">Pause between passages <output id="gap-value" for="gap">2 s</output><input id="gap" type="range" min="0" max="10" step="0.5" value="2"></label>
       </div>
-      <p class="hint">Voice, pitch, and speed changes apply to the next spoken segment. Pause length applies to the next break.</p>
+      <p class="hint">Pitch applies to the phone voice only; Edge uses its natural pitch. Voice and speed changes apply to the next segment. Pause length applies to the next break.</p>
     </section>
     <section class="player" aria-labelledby="listen-heading">
       <h2 id="listen-heading">Listen</h2>
@@ -37,8 +46,9 @@ Choose a short passage you want to learn today. Listen once for the main idea, t
       <p id="preview"></p>
       <p class="hint">Keep this page open for the first test. Screen locking, switching apps, and AirPods controls still need testing on your phone.</p>
     </section>
-    <footer>No paid speech service. Uses voices available in your browser; some voices may need an internet connection.</footer>
+    <footer>Edge speech sends text to Microsoft through your PC. Phone speech uses your browser’s voices. No paid speech API is configured.</footer>
   </main>
-  <script src="speech.js"></script><script src="app.js"></script>
+  <audio id="edge-audio" preload="auto"></audio>
+  <script src="speech.js"></script><script src="edge-speech.js"></script><script src="app.js"></script>
 </body>
 </html>

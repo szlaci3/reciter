@@ -2,41 +2,76 @@
 
 Your daily learning, spoken.
 
-Personal listening prototype using the browser's Web Speech API. No dependencies, API keys, paid speech service, or build step. Preferred voice: **Daniel, British English, pitch 1.4**, based on the user's successful phone test. Browser voice availability still depends on the device.
+Personal listening prototype with PC-hosted **edge-tts** and automatic browser-speech fallback. The usual setup is a running PC and a phone on the same Wi-Fi. No paid API key is needed. `edge-tts` uses Microsoft's online service through an unofficial integration; its future availability is not guaranteed.
 
-## Run
+## Start on Windows
 
-Open `index.html` in a desktop browser, or serve this folder with Python:
+From this folder in PowerShell:
 
-```sh
-python3 -m http.server 8000 --bind 0.0.0.0
+```powershell
+.\start.ps1
 ```
 
-On Windows, `py -m http.server 8000 --bind 0.0.0.0` may be the available command. From a phone on the same trusted Wi-Fi, visit `http://<computer-LAN-IP>:8000`. The computer must remain on and its firewall must allow the server on the private network. Run the command inside `Reciter/` so only this folder is served. This is a local test server, not a public deployment; no hosting account is needed.
+The launcher installs dependencies into `.venv` if needed and starts the server on port 8000. Keep the terminal open. If script execution is restricted, run the equivalent commands individually:
 
-## Use
-
-Paste text, separating passages with blank lines. Daniel is selected when exposed by the browser, unless another voice was saved. If unavailable, the page clearly reports that and allows voice selection. Pitch starts at 1.4; speed starts at 1.0 and passage breaks at two seconds. Preferences and text persist in browser storage when permitted.
-
-Play starts the selected passage. Pause cancels the current short segment; Resume repeats that segment. Stop resets to the beginning of the selected passage. Previous, Next, and the passage selector navigate passages; navigation continues playback when already playing. Editing text stops playback and returns to the first passage. Replay starts from the beginning after completion.
-
-Long passages are split into short utterances to reduce problems with lengthy browser speech. This can affect phrasing. Voice, pitch, and speed changes take effect at the next segment; the break setting takes effect at the next passage break. Text is not sent to an application backend, but a browser/OS voice may use a remote speech service. No paid API is configured.
-
-## Phone acceptance checks
-
-1. Confirm Daniel is selected and pitch is 1.4. Compare the same text with the successful earlier voice test.
-2. Try several paragraphs and then a longer session. Check pronunciation, speed, phrasing, and pauses.
-3. Pause mid-passage and during a break; resume. Test Stop, passage navigation, and editing during playback.
-4. Reload and check saved text/preferences. Try without a connection to discover whether this voice works offline.
-5. Separately test screen locking and switching apps. Record phone model, OS, browser, and observed behavior; background playback is not guaranteed by this prototype.
-6. Try AirPods controls as a separate experiment. No Media Session integration or headset-control support is implemented yet.
-
-## Validation
-
-```sh
-node --test speech.test.js
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe server.py
 ```
 
-Tests exercise passage parsing, speech settings, cancellation races, passage breaks, pause/resume, navigation, and retries with a mock speech engine. Real voice quality and mobile behavior require device testing.
+1. Open `http://<PC-LAN-IP>:8000` on the phone using the same trusted Wi-Fi. Use `ipconfig` on the PC to find its Wi-Fi/Ethernet IPv4 address. Windows Firewall must allow this Python service on your private network.
+2. Expand **PC connection**, enter that same address, and paste the access key printed in the terminal. The key is stored in `.reciter-token` on the PC and in session storage for the browser tab. It is not included in the public build.
+3. Tap **Connect / retry Edge**, choose an Edge voice, then **Play**. The initial choice is British English Sonia. Ryan, Thomas, Libby, and Maisie were also returned by the live voice-list test.
+4. Choose **Phone voice only** to switch manually. Daniel, British English, is the preferred phone voice at pitch 1.4. If unavailable, the page reports that and lets you choose another browser voice.
 
-Preparation context and ongoing decision diary are in `../Prepare-reciter/`. Content curation, spaced repetition, and AI integration are future work.
+Text, address, source, voice selection, and playback settings persist in local browser storage when available. The access key survives reloads in the same tab through session storage; you may need to enter it again in a new session.
+
+## Playback and fallback
+
+Automatic mode requests MP3 audio from the PC. The PC sends the requested text to Microsoft's speech service. An unavailable PC, failed synthesis, authentication failure, or request timeout triggers phone speech for the same segment. The failed PC is not retried for every subsequent segment; a fresh Play or Connect attempt retries it. A PC restart may require Connect again to reload its voice catalogue.
+
+Switching source stops playback; press Play to restart the current passage with the selected source. Pausing cancels the current segment, and Resume repeats it. Previous/Next and the passage selector navigate passages. Editing text stops playback and resets the position. Browser pitch starts at 1.4; Edge uses natural pitch. Speed applies to both engines. Speech remains divided into short segments (up to 220 characters), so transitions may affect phrasing.
+
+The server keeps up to 100 generated segments in memory, keyed by text, voice, and speed. Restarting the server clears this cache. It does not save user audio or text to disk. Browser voices themselves may require internet.
+
+Mobile browsers can require another tap before audio starts, including after an asynchronous fallback. If playback is blocked, tap Play again or select Phone voice only. Screen locking, switching apps, and AirPods controls need real-device testing; no headset-control integration is implemented.
+
+## Later: Netlify or Vercel frontend, PC speech service
+
+Yes: hosting the frontend independently means it can load and use Daniel while the PC is off. Build public files with:
+
+```powershell
+python build.py
+```
+
+Deploy **only `dist/`** as a static site. The build contains only the five frontend assets; no Python server, virtual environment, access key, or tests. No hosting deployment is performed by this implementation.
+
+For Edge speech from that hosted HTTPS site, the PC service also needs a reachable **HTTPS endpoint** (for example, an appropriately configured tunnel or HTTPS reverse proxy). A plain LAN HTTP address is not sufficient for this implementation's hosted-page connection. The endpoint must be reachable from the phone's network. Hosting the frontend does not itself expose the PC service, and the frontend does not discover the PC automatically.
+
+Start the PC helper allowing the exact frontend origin:
+
+```powershell
+.\.venv\Scripts\python.exe server.py --origin https://your-reciter-site.netlify.app
+```
+
+Enter the PC's HTTPS endpoint and access key in the hosted frontend, then Connect. Multiple `--origin` arguments are supported. A tunnel/reverse proxy and deployment are not configured yet. API calls require the key, and cross-origin browser calls are restricted to configured origins. Keep the key private and do not put it in source control or build settings exposed to browsers.
+
+When the PC is off, the hosted website continues with the phone voice. This does not imply offline website support: an internet connection is still needed to load the hosted frontend.
+
+## Verification
+
+```powershell
+node --test speech.test.js edge-speech.test.js
+.\.venv\Scripts\python.exe -m unittest test_server -v
+```
+
+Tests cover passage playback, cancellation races, phone fallback, manual selection, audio completion, mobile playback rejection, authentication, CORS, input validation, restricted static serving, and audio caching. Mocked tests cannot verify voice quality or mobile permissions.
+
+Optional live check (sends one generic sample sentence to Microsoft):
+
+```powershell
+.\.venv\Scripts\python.exe live_smoke.py
+```
+
+Live verification on 2026-09-19 successfully listed British neural voices and generated 32,112 bytes of Sonia MP3 audio through the service. No browser interaction or listening-quality test was performed.
