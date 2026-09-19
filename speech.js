@@ -18,6 +18,43 @@
     if (rest) result.push(rest);
     return result;
   }
+  function edgeSegments(text) {
+    // Keep normal sentences intact. Bound requests below the server's 2000
+    // character limit, even for pasted text without sentence punctuation.
+    const target = 600, limit = 1800;
+    const source = text.trim(), sentences = [];
+    let start = 0;
+    const endings = /[.!?]+(?:["'”’\)\]]|\[\d+(?:[–,\-]\d+)*\])*(?=\s|$)/g;
+    for (const match of source.matchAll(endings)) {
+      const end = match.index + match[0].length;
+      const prefix = source.slice(start, match.index + 1);
+      // Prefer missing an ambiguous boundary to cutting a name or abbreviation.
+      if (match[0] === '.' && /(?:\b(?:Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St|vs|etc)\.|\b[A-Z]\.|\b(?:[A-Za-z]\.){2,})$/i.test(prefix)) continue;
+      sentences.push(source.slice(start, end).trim());
+      start = end;
+    }
+    if (source.slice(start).trim()) sentences.push(source.slice(start).trim());
+    const chunks = []; let current = '';
+    const flush = () => { if (current) chunks.push(current); current = ''; };
+    for (let sentence of sentences) {
+      if (current && current.length + 1 + sentence.length > target) flush();
+      while (sentence.length > limit) {
+        flush();
+        const window = sentence.slice(0, limit + 1);
+        const clause = [...window.matchAll(/[,;:]\s/g)].pop();
+        let end = clause && clause.index > limit / 2 ? clause.index + 1
+          : window.search(/\s+\S*$/);
+        if (end < 1) end = limit;
+        // Do not split a UTF-16 surrogate pair in an unbroken token.
+        if (/[\uD800-\uDBFF]/.test(sentence[end - 1])) end--;
+        chunks.push(sentence.slice(0, end));
+        sentence = sentence.slice(end).trimStart();
+      }
+      current = current ? current + ' ' + sentence : sentence;
+    }
+    flush();
+    return chunks;
+  }
   class Player {
     constructor(synth, makeUtterance, settings, update, timers = globalThis) {
       Object.assign(this, { synth, makeUtterance, settings, update, timers });
@@ -58,7 +95,10 @@
     }
     speak() {
       const token = ++this.generation;
-      const parts = segments(this.items[this.index]);
+      // Freeze the current passage's boundaries across fallback and resume so
+      // changing engines cannot reinterpret the current part index.
+      const split = text => this.synth.segmentText?.(text) ?? segments(text);
+      const parts = this.part === 0 ? (this.parts = split(this.items[this.index])) : this.parts;
       const settings = this.settings();
       const utterance = this.makeUtterance(parts[this.part]);
       this.utterance = utterance;
@@ -72,9 +112,12 @@
         this.part = 0;
         if (this.index + 1 >= this.items.length) { this.state = 'ended'; this.update(); return; }
         this.index++; this.state = 'waiting'; this.update();
+        const gap = this.settings().gap * 1000;
+        // A zero-length break needs no background timer between recordings.
+        if (gap === 0) { this.speak(); return; }
         this.timer = this.timers.setTimeout(() => {
           if (token === this.generation) this.speak();
-        }, this.settings().gap * 1000);
+        }, gap);
       };
       utterance.onerror = event => {
         if (token !== this.generation) return;
@@ -82,12 +125,12 @@
       };
       this.state = 'speaking'; this.update();
       const nextText = parts[this.part + 1] ?? (this.index + 1 < this.items.length
-        ? segments(this.items[this.index + 1])[0] : null);
+        ? split(this.items[this.index + 1])[0] : null);
       const next = nextText ? { text: nextText, rate: settings.rate } : null;
       try { this.synth.speak(utterance, next); } catch { utterance.onerror({ error: 'speech unavailable' }); }
     }
   }
-  const api = { passages, segments, Player };
+  const api = { passages, segments, edgeSegments, Player };
   if (typeof module !== 'undefined') module.exports = api;
   else root.ReciterSpeech = api;
 })(globalThis);

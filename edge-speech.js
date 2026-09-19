@@ -1,5 +1,6 @@
 /* Adapter keeps passage navigation/cancellation shared with browser speech. */
 (function (root) {
+  const parsing = typeof module !== 'undefined' ? require('./speech.js') : root.ReciterSpeech;
   class EdgeSpeech {
     constructor(native, config, report, audio, fetcher = fetch, timers = globalThis) {
       Object.assign(this, { native, config, report, audio, fetcher, timers });
@@ -15,6 +16,10 @@
         if (this.mode !== 'edge' || audio.paused) return;
         this.paused = false; this.onPlaybackChange?.(false);
       };
+    }
+    segmentText(text) {
+      return this.config().source === 'browser' || this.failed
+        ? parsing.segments(text) : parsing.edgeSegments(text);
     }
     // Mobile audio interruptions do not always deliver a pause event. On return,
     // reconcile the media state, then check for a clock frozen by lost audio focus.
@@ -101,7 +106,7 @@
     }
     requestAudio(utterance, c) {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 12000);
+      let timeout;
       const request = {
         key: this.audioKey(utterance, c),
         abort() { clearTimeout(timeout); controller.abort(); }
@@ -113,13 +118,27 @@
           const base = new URL(c.url);
           if (!['http:', 'https:'].includes(base.protocol)) throw new Error('Use an HTTP or HTTPS PC address.');
           if (root.location?.protocol === 'https:' && base.protocol !== 'https:') throw new Error('The hosted page needs an HTTPS PC address.');
-          const response = await this.fetcher(c.url.replace(/\/$/, '') + '/api/speech', {
-            method: 'POST', signal: controller.signal,
-            headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + c.key },
-            body: JSON.stringify({ text: utterance.text, voice: c.edgeVoice, rate: utterance.rate })
-          });
-          if (!response.ok) throw new Error('PC speech request failed (' + response.status + ').');
-          return { blob: await response.blob() };
+          for (let attempt = 1; attempt <= 2; attempt++) {
+            controller.signal.throwIfAborted();
+            // Each attempt gets its own timeout: a slow 502 must not consume
+            // the second attempt's allowance. Stop still cancels both attempts.
+            timeout = setTimeout(() => controller.abort(), 12000);
+            try {
+              const response = await this.fetcher(c.url.replace(/\/$/, '') + '/api/speech', {
+                method: 'POST', signal: controller.signal,
+                headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + c.key },
+                body: JSON.stringify({ text: utterance.text, voice: c.edgeVoice, rate: utterance.rate })
+              });
+              controller.signal.throwIfAborted();
+              if (response.status === 502 && attempt === 1) {
+                await response.body?.cancel();
+                continue;
+              }
+              if (!response.ok) throw new Error('PC speech request failed (' + response.status + ')' +
+                (attempt === 2 ? ' after 2 attempts.' : '.'));
+              return { blob: await response.blob() };
+            } finally { clearTimeout(timeout); }
+          }
         } catch (error) {
           return { error };
         } finally { clearTimeout(timeout); }

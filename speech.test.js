@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { passages, segments, Player } = require('./speech.js');
+const { passages, segments, edgeSegments, Player } = require('./speech.js');
 
 function fixture() {
   const spoken = [], pending = new Map(); let nextId = 0;
@@ -52,4 +52,36 @@ test('resume retains the interrupted utterance and errors allow retry', () => {
   assert.equal(spoken.length, 1);
   spoken[0].onerror({ error: 'network' }); assert.equal(player.state, 'error');
   player.play(); assert.equal(player.state, 'speaking');
+});
+
+test('Edge keeps a long sentence intact instead of cutting at 220 characters', () => {
+  const sentence = 'Advocates of vibe coding say it allows amateur programmers to produce software ' +
+    'by explaining what they want and examining the generated result '.repeat(7).trim() + '.';
+  assert.ok(sentence.length > 220);
+  assert.deepEqual(edgeSegments(sentence), [sentence]);
+  assert.ok(segments(sentence).length > 1);
+});
+
+test('Edge groups full sentences and keeps citations and closing quotes with them', () => {
+  const first = 'An explanation with enough detail to make the sentence quite long '.repeat(6).trim() + '.”[12][13]';
+  const second = 'A separate explanation with more detail for the next sentence '.repeat(6).trim() + '.[14]';
+  assert.deepEqual(edgeSegments(first + ' ' + second), [first, second]);
+  assert.deepEqual(edgeSegments('One.[1] Two.[2] Three!'), ['One.[1] Two.[2] Three!']);
+});
+
+test('Edge avoids boundaries inside common abbreviations, initials and decimals', () => {
+  const first = 'An introductory explanation '.repeat(21).trim() + '.';
+  const second = 'Dr. A. Smith uses version 3.14, e.g. for U.S. projects.';
+  assert.deepEqual(edgeSegments(first + ' ' + second), [first, second]);
+});
+
+test('Edge bounds oversized and unpunctuated text without dropping content', () => {
+  for (const text of ['word '.repeat(1200).trim(), 'x'.repeat(5000), '😀'.repeat(2200),
+    'A detailed clause, '.repeat(220).trim() + '.']) {
+    const chunks = edgeSegments(text);
+    assert.ok(chunks.every(chunk => chunk.length > 0 && chunk.length <= 1800));
+    assert.equal(chunks.join('').replace(/\s/g, ''), text.replace(/\s/g, ''));
+    assert.ok(chunks.every(chunk => !/[\uD800-\uDBFF]$/.test(chunk)));
+  }
+  assert.deepEqual(edgeSegments('   '), []);
 });

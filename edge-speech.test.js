@@ -298,7 +298,7 @@ test('manual phone speech discards prepared audio and does not prefetch', async 
 });
 
 test('player prepares across chunks and passages while keeping the passage break and Replay', async () => {
-  const { Player, segments } = require('./speech.js');
+  const { Player, edgeSegments } = require('./speech.js');
   const texts = [];
   const f = fixture(async (_, options) => { texts.push(JSON.parse(options.body).text); return okAudio(); });
   const pending = new Map(); let id = 0;
@@ -307,8 +307,8 @@ test('player prepares across chunks and passages while keeping the passage break
     clearTimeout(key) { pending.delete(key); }
   };
   const player = new Player(f.engine, text => ({ text }), () => ({ rate: 1, gap: 2 }), () => {}, timers);
-  const paragraph = 'A useful sentence about the subject. '.repeat(9).trim();
-  const parts = segments(paragraph);
+  const paragraph = 'A useful sentence about the subject. '.repeat(30).trim();
+  const parts = edgeSegments(paragraph);
   assert.equal(parts.length, 2);
   player.setText(paragraph + '\n\nFinal passage.'); player.play(); await tick();
   assert.deepEqual(texts, parts);
@@ -322,4 +322,111 @@ test('player prepares across chunks and passages while keeping the passage break
   f.audio.onended(); assert.equal(player.state, 'ended');
   player.play(); await tick();
   assert.deepEqual(texts.slice(3), parts); assert.equal(player.index, 0); player.stop();
+});
+
+test('phone selection keeps short chunks and fallback preserves current passage boundaries', async () => {
+  const { Player, edgeSegments, segments } = require('./speech.js');
+  const f = fixture(async () => { throw new Error('PC offline'); });
+  const text = 'An explanation that must be spoken in the correct order. '.repeat(23).trim();
+  f.config.source = 'browser';
+  assert.deepEqual(f.engine.segmentText(text), segments(text));
+  f.config.source = 'auto';
+  const expected = edgeSegments(text);
+  assert.deepEqual(f.engine.segmentText(text), expected);
+  assert.ok(expected.length > 1);
+  const player = new Player(f.engine, text => ({ text }), () => ({ rate: 1, gap: 0 }), () => {});
+  player.setText(text); player.play(); await tick();
+  assert.equal(f.engine.failed, true);
+  for (let i = 0; i < expected.length; i++) {
+    assert.equal(f.spoken[i].text, expected[i]);
+    f.spoken[i].onend(); await tick();
+  }
+  assert.equal(player.state, 'ended'); assert.equal(f.spoken.length, expected.length);
+  assert.deepEqual(f.engine.segmentText(text), segments(text)); player.stop();
+});
+
+test('HTTP 502 retries the identical request once and keeps Edge after success', async () => {
+  const bodies = [];
+  const f = fixture(async (_, options) => {
+    bodies.push(options.body);
+    return bodies.length === 1 ? { ok: false, status: 502 } : okAudio();
+  });
+  await f.engine.speak(f.utterance);
+  assert.equal(bodies.length, 2); assert.equal(bodies[0], bodies[1]);
+  assert.equal(f.engine.mode, 'edge'); assert.equal(f.engine.failed, false);
+  assert.equal(f.spoken.length, 0); f.engine.cancel();
+});
+
+test('two HTTP 502 responses abandon Edge and fall back once without a third attempt', async () => {
+  let calls = 0;
+  const f = fixture(async () => { calls++; return { ok: false, status: 502 }; });
+  await f.engine.speak(f.utterance);
+  assert.equal(calls, 2); assert.equal(f.spoken.length, 1);
+  assert.match(f.reports.at(-1), /502.*after 2 attempts/);
+  await f.engine.speak(nextUtterance(f));
+  assert.equal(calls, 2); assert.equal(f.spoken.length, 2); f.engine.cancel();
+});
+
+test('authentication and validation failures do not retry', async () => {
+  for (const status of [400, 401, 403]) {
+    let calls = 0;
+    const f = fixture(async () => { calls++; return { ok: false, status }; });
+    await f.engine.speak(f.utterance);
+    assert.equal(calls, 1); assert.equal(f.spoken.length, 1); f.engine.cancel();
+  }
+});
+
+test('prefetch performs at most two attempts and its success is reused at playback', async () => {
+  let calls = 0;
+  const f = fixture(async () => ++calls === 2 ? { ok: false, status: 502 } : okAudio());
+  const next = nextUtterance(f);
+  await f.engine.speak(f.utterance, next); await tick();
+  assert.equal(calls, 3); assert.equal(f.spoken.length, 0);
+  await f.engine.speak(next);
+  assert.equal(calls, 3); assert.equal(f.engine.mode, 'edge'); f.engine.cancel();
+});
+
+test('Stop after the first 502 prevents retry and fallback', async () => {
+  let calls = 0;
+  const f = fixture(async () => {
+    calls++;
+    return { ok: false, status: 502, body: { async cancel() { f.engine.cancel(); } } };
+  });
+  await f.engine.speak(f.utterance);
+  assert.equal(calls, 1); assert.equal(f.spoken.length, 0);
+  assert.equal(f.engine.mode, null);
+});
+
+test('pausing during the second attempt keeps returned audio paused', async () => {
+  let calls = 0, resolve;
+  const f = fixture(() => ++calls === 1 ? Promise.resolve({ ok: false, status: 502 })
+    : new Promise(r => { resolve = r; }));
+  const pending = f.engine.speak(f.utterance); await tick();
+  assert.equal(calls, 2); f.engine.pause();
+  resolve(okAudio()); await pending;
+  assert.equal(f.audio.paused, true); assert.equal(f.spoken.length, 0);
+  f.engine.resume(); assert.equal(f.audio.paused, false); f.engine.cancel();
+});
+
+test('reported clarification excerpt advances through all passages with zero or three-second gaps', async () => {
+  const { Player, passages } = require('./speech.js');
+  const text = 'Clarification – infer what the user really means.\n\n' +
+    'Context enrichment – automatically inject relevant background, goals, constraints, and previous decisions.\n\n' +
+    'Professionalization – rewrite the request the way a domain expert would formulate it.';
+  for (const gap of [0, 3]) {
+    const requests = [], timers = [];
+    const f = fixture(async (_, options) => { requests.push(JSON.parse(options.body).text); return okAudio(); });
+    const player = new Player(f.engine, text => ({ text }), () => ({ rate: 1, gap }), () => {}, {
+      setTimeout(fn, delay) { assert.equal(delay, 3000); timers.push(fn); }, clearTimeout() {}
+    });
+    player.setText(text); player.play(); await tick();
+    for (let i = 0; i < 3; i++) {
+      f.audio.onended();
+      if (i < 2 && gap) { assert.equal(player.state, 'waiting'); timers.shift()(); }
+      await tick();
+    }
+    assert.deepEqual(requests, passages(text));
+    assert.equal(player.state, 'ended'); assert.equal(f.spoken.length, 0);
+    assert.equal(timers.length, 0); player.stop();
+  }
 });
