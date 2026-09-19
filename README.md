@@ -35,11 +35,20 @@ Switching source stops playback; press Play to restart the current passage with 
 
 The server keeps up to 100 generated segments in memory, keyed by text, voice, and speed. Restarting the server clears this cache. It does not save user audio or text to disk. Browser voices themselves may require internet.
 
-Mobile browsers can require another tap before audio starts, including after an asynchronous fallback. If playback is blocked, tap Play again or select Phone voice only. Where supported, Media Session play/pause controls use the same functions as the buttons. Edge audio play/pause events also synchronize the UI when the headset controls the audio directly. Resume does not replace the audio source or request the segment again. Double-tap Next/Previous mapping is deferred. Screen locking, switching apps, and AirPods controls need real-device testing.
+Mobile browsers can require another tap before audio starts, including after an asynchronous fallback. If playback is blocked, tap Play again or select Phone voice only. Where supported, Media Session play/pause controls use the same functions as the buttons. Edge audio play/pause events also synchronize the UI when the headset controls the audio directly. Resume does not replace the audio source or request the segment again. Double-tap Next/Previous mapping is deferred. Screen locking and longer background sessions still need device testing.
 
-AirPods retest: pause with the button, resume with one tap, and check that speech continues in place and the Pause button becomes available. Then pause with one tap and resume with the button. Also check Stop → Play restarts the passage, and pause during preparation stays silent until resumed.
+User-verified behavior on the tested phone differs by speech source:
 
-When returning to Reciter, the page checks for interrupted playback. If Edge audio is paused, or its playback position remains frozen for 1.5 seconds after returning, the interface offers Resume while retaining the current audio and position. Playback that is still advancing continues normally. Phone speech is reconciled when the browser reports it paused. Retest on the phone: play in Reciter, start a YouTube video, return to Reciter, and press Resume once. Actual mobile audio-focus behavior still needs device verification; an interruption that silences audio while its reported position continues advancing cannot be detected by this check.
+| Behavior | Female Edge voice | Daniel (phone/browser speech) |
+| --- | --- | --- |
+| AirPod one-tap pause/resume during an established listening session | Works, including switching between button and headset controls | Does not respond to one tap |
+| One-tap Replay after the document finishes | Works; restarts the document | Not established; one-tap controls do not work in the reported test |
+| Starting a YouTube video | Silences Reciter | Daniel keeps speaking |
+| Returning after YouTube interrupts Reciter | Shows Resume; the on-screen button works | The reported Edge interruption flow does not apply |
+
+With the female Edge voice, one tap still does not start playback on a freshly loaded page or resume after returning from YouTube before touching the controls. Use the on-screen Play/Resume button in those cases. The attempted headset-readiness change did not resolve these limitations and was reverted. For Daniel, use the on-screen controls and pause or stop Reciter before starting YouTube. Edge plays generated audio through an HTML audio element; Daniel uses browser speech synthesis, so their headset and interruption behavior can differ.
+
+When returning to Reciter, the page checks for interrupted playback. If Edge audio is paused, or its playback position remains frozen for 1.5 seconds after returning, the interface offers Resume while retaining the current audio and position. The user confirmed this fix works with the female Edge voice. Playback that is still advancing continues normally. Phone speech is reconciled only when the browser reports it paused; this does not make Daniel stop when YouTube starts. An interruption that silences audio while its reported position continues advancing cannot be detected by this check.
 
 ## Later: Netlify or Vercel frontend, PC speech service
 
