@@ -4,7 +4,7 @@ const { passages, segments, Player } = require('./speech.js');
 
 function fixture() {
   const spoken = [], pending = new Map(); let nextId = 0;
-  const synth = { cancel() {}, speak(u) { spoken.push(u); } };
+  const synth = { cancel() {}, pause() {}, resume() {}, speak(u) { spoken.push(u); } };
   const timers = { setTimeout(fn) { pending.set(++nextId, fn); return nextId; }, clearTimeout(id) { pending.delete(id); } };
   const player = new Player(synth, text => ({ text }), () => ({ voice: { name: 'Daniel', lang: 'en-GB' }, pitch: 1.4, rate: 1, gap: 2 }), () => {}, timers);
   return { player, spoken, pending };
@@ -46,10 +46,10 @@ test('navigation cancels old playback; editing stops and resets', () => {
   player.setText('New.'); spoken[1].onend();
   assert.equal(player.state, 'idle'); assert.equal(player.index, 0); assert.deepEqual(player.items, ['New.']);
 });
-test('resume repeats the interrupted segment and errors allow retry', () => {
+test('resume retains the interrupted utterance and errors allow retry', () => {
   const { player, spoken } = fixture();
   player.setText('Remember this.'); player.play(); player.pause(); player.play();
-  assert.equal(spoken[0].text, spoken[1].text);
-  spoken[1].onerror({ error: 'network' }); assert.equal(player.state, 'error');
+  assert.equal(spoken.length, 1);
+  spoken[0].onerror({ error: 'network' }); assert.equal(player.state, 'error');
   player.play(); assert.equal(player.state, 'speaking');
 });

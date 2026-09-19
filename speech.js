@@ -22,6 +22,10 @@
     constructor(synth, makeUtterance, settings, update, timers = globalThis) {
       Object.assign(this, { synth, makeUtterance, settings, update, timers });
       this.items = []; this.index = 0; this.part = 0; this.state = 'idle'; this.generation = 0;
+      synth.onPlaybackChange = paused => {
+        if (!this.utterance || !['speaking', 'paused'].includes(this.state)) return;
+        this.state = paused ? 'paused' : 'speaking'; this.update();
+      };
     }
     invalidate() {
       this.generation++;
@@ -39,14 +43,18 @@
     }
     play() {
       if (!this.items.length || this.state === 'speaking' || this.state === 'waiting') return;
-      // Resume by repeating only the interrupted short segment; native resume is
-      // inconsistent on mobile, and this keeps pauses between passages reliable.
+      if (this.state === 'paused' && this.utterance) {
+        this.state = 'speaking'; this.update(); this.synth.resume(); return;
+      }
       if (this.state === 'ended') { this.index = 0; this.part = 0; }
       this.speak();
     }
     pause() {
       if (this.state !== 'speaking' && this.state !== 'waiting') return;
-      this.invalidate(); this.state = 'paused'; this.update();
+      if (this.state === 'waiting') {
+        this.invalidate(); this.state = 'paused'; this.update(); return;
+      }
+      this.state = 'paused'; this.update(); this.synth.pause();
     }
     speak() {
       const token = ++this.generation;

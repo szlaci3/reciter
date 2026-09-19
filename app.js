@@ -38,7 +38,8 @@
   function render(error) {
     const active = ['speaking', 'waiting'].includes(player.state);
     const position = player.items.length ? `Passage ${player.index + 1} of ${player.items.length}` : 'Add some text to begin';
-    const labels = { idle: 'Ready', speaking: 'Speaking', waiting: 'Taking a breath', paused: 'Paused — resume repeats the interrupted segment', ended: 'Finished', error: `Speech failed (${error || 'unknown'}). Try Play again or choose another voice` };
+    const labels = { idle: 'Ready', speaking: 'Speaking', waiting: 'Taking a breath', paused: 'Paused', ended: 'Finished', error: `Speech failed (${error || 'unknown'}). Try Play again or choose another voice` };
+    if (navigator.mediaSession) navigator.mediaSession.playbackState = active ? 'playing' : player.state === 'paused' ? 'paused' : 'none';
     $('status').textContent = `${labels[player.state]} · ${position}`;
     $('play').textContent = player.state === 'paused' ? 'Resume' : player.state === 'ended' ? 'Replay' : 'Play';
     $('play').disabled = active || !player.items.length;
@@ -108,7 +109,20 @@
   $('edge-voice').addEventListener('change', () => { edgeVoice = $('edge-voice').value; save(); });
   $('voice').addEventListener('change', () => { preferred = $('voice').value; save(); $('voice-note').textContent = 'Your selected voice will be used for the next spoken segment.'; });
   for (const key of ['pitch', 'rate', 'gap']) $(key).addEventListener('input', () => { outputs(); save(); });
-  $('play').addEventListener('click', () => { loadVoices(); engine.failed = false; if ($('source').value === 'auto') engine.unlock(); player.play(); });
+  function play() {
+    if (['speaking', 'waiting'].includes(player.state)) return;
+    if (player.state !== 'paused') {
+      loadVoices(); engine.failed = false;
+      if ($('source').value === 'auto') engine.unlock();
+    }
+    player.play();
+  }
+  $('play').addEventListener('click', play);
+  if (navigator.mediaSession) {
+    for (const [action, handler] of [['play', play], ['pause', () => player.pause()]]) {
+      try { navigator.mediaSession.setActionHandler(action, handler); } catch { /* Unsupported action. */ }
+    }
+  }
   $('pause').addEventListener('click', () => player.pause());
   $('stop').addEventListener('click', () => player.stop());
   $('previous').addEventListener('click', () => player.select(player.index - 1));

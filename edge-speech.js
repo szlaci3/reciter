@@ -5,8 +5,20 @@
       Object.assign(this, { native, config, report, audio, fetcher });
       this.generation = 0;
       this.failed = false;
+      this.mode = null;
+      this.paused = false;
+      audio.onpause = () => {
+        if (this.mode !== 'edge' || !audio.paused || audio.ended) return;
+        this.paused = true; this.onPlaybackChange?.(true);
+      };
+      audio.onplay = () => {
+        if (this.mode !== 'edge' || audio.paused) return;
+        this.paused = false; this.onPlaybackChange?.(false);
+      };
     }
     cancel() {
+      this.mode = null;
+      this.paused = false;
       this.generation++;
       this.controller?.abort();
       clearTimeout(this.timeout);
@@ -16,6 +28,25 @@
       if (this.url) URL.revokeObjectURL(this.url);
       this.url = null;
       this.native?.cancel();
+      // SpeechSynthesis can remain paused even after its queue is canceled.
+      this.native?.resume?.();
+    }
+    pause() {
+      this.paused = true;
+      if (this.mode === 'edge') this.audio.pause();
+      if (this.mode === 'browser') this.native.pause();
+    }
+    resume() {
+      this.paused = false;
+      if (this.mode === 'edge') {
+        const token = this.generation;
+        this.audio.play()?.catch(() => {
+          if (token !== this.generation || this.mode !== 'edge') return;
+          this.paused = true; this.onPlaybackChange?.(true);
+          this.report('Audio could not resume. Tap Resume to retry.');
+        });
+      }
+      if (this.mode === 'browser') this.native.resume();
     }
     // Called synchronously from Play to unlock the reusable mobile audio element.
     unlock() {
@@ -23,20 +54,24 @@
       this.audio.play()?.catch(() => {});
     }
     browser(utterance, reason) {
+      this.mode = 'browser';
       if (!this.native) {
         utterance.onerror({ error: 'Browser speech unavailable. Connect the PC and retry.' });
         return;
       }
       this.report(reason + ' Using ' + (utterance.voice?.name || 'browser default (Daniel unavailable)') + '.');
-      try { this.native.speak(utterance); }
+      try { this.native.speak(utterance); if (this.paused) this.native.pause(); }
       catch { utterance.onerror({ error: 'Phone speech failed. Tap Play or choose another phone voice.' }); }
     }
     async speak(utterance) {
       const token = ++this.generation;
+      this.mode = 'loading';
+      this.paused = false;
       let fellBack = false;
       const fallback = reason => {
         if (fellBack || token !== this.generation) return;
         fellBack = true;
+        this.mode = 'browser';
         this.audio.onended = this.audio.onerror = null;
         this.audio.pause();
         this.failed = true;
@@ -67,16 +102,22 @@
         if (this.url) URL.revokeObjectURL(this.url);
         this.url = URL.createObjectURL(blob);
         this.audio.src = this.url;
-        this.audio.onended = () => { if (token === this.generation) utterance.onend(); };
+        this.mode = 'edge';
+        this.audio.onended = () => {
+          if (token !== this.generation) return;
+          this.mode = null; utterance.onend();
+        };
         this.audio.onerror = () => {
           if (token !== this.generation) return;
           fallback('Edge audio could not play.');
         };
-        await this.audio.play();
+        if (!this.paused) await this.audio.play();
         if (token === this.generation && !fellBack) this.report('Edge · ' + c.edgeVoice);
       } catch (error) {
         if (token !== this.generation) return;
         clearTimeout(this.timeout);
+        // Pausing while play() is pending can reject it with AbortError.
+        if (error.name === 'AbortError' && this.mode === 'edge' && this.paused) return;
         if (error.name === 'NotAllowedError') {
           this.audio.onended = this.audio.onerror = null;
           utterance.onerror({ error: 'Tap Play again to allow audio, or switch to phone voice.' });
