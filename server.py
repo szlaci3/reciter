@@ -5,12 +5,21 @@ from collections import OrderedDict
 import math
 from pathlib import Path
 import secrets
+import string
 
 from aiohttp import web
 import edge_tts
 
 ROOT = Path(__file__).resolve().parent
 FRONTEND = ('index.html', 'style.css', 'speech.js', 'edge-speech.js', 'app.js')
+
+
+def load_access_key(path):
+    token = path.read_text(encoding='utf-8').strip() if path.exists() else ''
+    if len(token) != 4 or any(letter not in string.ascii_lowercase for letter in token):
+        token = ''.join(secrets.choice(string.ascii_lowercase) for _ in range(4))
+        path.write_text(token, encoding='utf-8')
+    return token
 
 
 def create_app(token, origins=(), communicate=edge_tts.Communicate, list_voices=edge_tts.list_voices):
@@ -110,9 +119,7 @@ if __name__ == '__main__':
     parser.add_argument('--origin', action='append', default=[], help='Allowed frontend origin, e.g. https://reciter.example')
     args = parser.parse_args()
     token_file = ROOT / '.reciter-token'
-    if not token_file.exists():
-        token_file.write_text(secrets.token_urlsafe(32), encoding='utf-8')
-    token = token_file.read_text(encoding='utf-8').strip()
+    token = load_access_key(token_file)
     print(f'PC access key (paste into Reciter): {token}')
     print('Open http://<PC-LAN-IP>:' + str(args.port) + ' on your phone, on the same Wi-Fi.')
     web.run_app(create_app(token, args.origin), host=args.host, port=args.port, access_log=None)

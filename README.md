@@ -21,7 +21,7 @@ python -m venv .venv
 ```
 
 1. Open `http://<PC-LAN-IP>:8000` on the phone using the same trusted Wi-Fi. Use `ipconfig` on the PC to find its Wi-Fi/Ethernet IPv4 address. Windows Firewall must allow this Python service on your private network.
-2. Expand **PC connection**, enter that same address, and paste the access key printed in the terminal. The key is stored in `.reciter-token` on the PC and in session storage for the browser tab. It is not included in the public build.
+2. Expand **PC connection**, enter that same address, and type the **four lowercase letters** printed in the terminal. The key is stored in `.reciter-token` on the PC and in session storage for the browser tab. It is not included in the public build. Existing long keys are replaced automatically on server restart; restart the service and reload the phone page after updating.
 3. Tap **Connect / retry Edge**, choose an Edge voice, then **Play**. The initial choice is British English Sonia. Ryan, Thomas, Libby, and Maisie were also returned by the live voice-list test.
 4. Choose **Phone voice only** to switch manually. Daniel, British English, is the preferred phone voice at pitch 1.4. If unavailable, the page reports that and lets you choose another browser voice.
 

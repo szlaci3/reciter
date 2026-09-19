@@ -24,8 +24,8 @@ Choose a short passage you want to learn today. Listen once for the main idea, t
       <p id="connection" class="hint" role="status">Connect your PC to load Edge voices, or use the phone voice.</p>
       <details><summary>PC connection</summary>
         <label for="pc-url">PC service address</label><input id="pc-url" type="url" placeholder="http://192.168.1.10:8000" autocomplete="off">
-        <label for="pc-key">PC access key</label><input id="pc-key" type="password" autocomplete="off">
-        <p class="hint">The key appears when you start the PC service. It is kept for this tab’s session. A hosted HTTPS website needs an HTTPS PC address.</p>
+        <label for="pc-key">PC access key · four lowercase letters</label><input id="pc-key" type="text" maxlength="4" pattern="[a-z]{4}" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="off" placeholder="abcd">
+        <p class="hint">Enter the four letters shown when you start the PC service. They are kept for this tab’s session. A hosted HTTPS website needs an HTTPS PC address.</p>
         <button id="connect">Connect / retry Edge</button>
       </details>
       <label for="edge-voice">Edge voice</label><select id="edge-voice"><option value="">Connect PC to load voices…</option></select>

@@ -1,6 +1,20 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from aiohttp.test_utils import AioHTTPTestCase
-from server import create_app
+from server import create_app, load_access_key
+
+
+class AccessKeyTest(unittest.TestCase):
+    def test_new_and_legacy_keys_are_four_letters_and_persist(self):
+        with TemporaryDirectory() as folder:
+            path = Path(folder) / '.reciter-token'
+            for legacy in (None, 'old-long-access-token'):
+                if legacy is not None:
+                    path.write_text(legacy, encoding='utf-8')
+                token = load_access_key(path)
+                self.assertRegex(token, r'^[a-z]{4}$')
+                self.assertEqual(load_access_key(path), token)
 
 
 class ServiceTest(AioHTTPTestCase):
@@ -19,12 +33,14 @@ class ServiceTest(AioHTTPTestCase):
         async def voices():
             return [{'ShortName': 'en-GB-SoniaNeural', 'Locale': 'en-GB', 'Gender': 'Female'}]
 
-        return create_app('test-key', ['https://reciter.example'], FakeSpeech, voices)
+        return create_app('abcd', ['https://reciter.example'], FakeSpeech, voices)
 
     async def test_auth_cors_and_static_boundaries(self):
         response = await self.client.get('/api/voices')
         self.assertEqual(response.status, 401)
-        response = await self.client.get('/api/voices', headers={'Authorization': 'Bearer test-key', 'Origin': 'https://bad.example'})
+        response = await self.client.get('/api/voices', headers={'Authorization': 'Bearer wrong'})
+        self.assertEqual(response.status, 401)
+        response = await self.client.get('/api/voices', headers={'Authorization': 'Bearer abcd', 'Origin': 'https://bad.example'})
         self.assertEqual(response.status, 403)
         response = await self.client.options('/api/speech', headers={'Origin': 'https://reciter.example'})
         self.assertEqual(response.status, 204)
@@ -34,7 +50,7 @@ class ServiceTest(AioHTTPTestCase):
         self.assertEqual((await self.client.get('/')).status, 200)
 
     async def test_voice_validation_and_audio_cache(self):
-        headers = {'Authorization': 'Bearer test-key'}
+        headers = {'Authorization': 'Bearer abcd'}
         self.assertEqual((await self.client.get('/api/voices', headers=headers)).status, 200)
         payload = {'text': 'Remember this.', 'voice': 'en-GB-SoniaNeural', 'rate': 1}
         for _ in range(2):
