@@ -129,6 +129,13 @@
   $('next').addEventListener('click', () => player.select(player.index + 1));
   $('passage').addEventListener('change', () => player.select(Number($('passage').value)));
   synth?.addEventListener('voiceschanged', loadVoices);
+  function reconcilePlayback() {
+    if (document.visibilityState === 'visible') engine.reconcilePlayback();
+    else engine.clearReturnCheck();
+  }
+  document.addEventListener('visibilitychange', reconcilePlayback);
+  window.addEventListener('focus', reconcilePlayback);
+  window.addEventListener('pageshow', reconcilePlayback);
   window.addEventListener('pagehide', () => player.stop());
   loadVoices(); textChanged();
   if ($('pc-url').value && $('pc-key').value) connect();

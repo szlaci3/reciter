@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { EdgeSpeech } = require('./edge-speech.js');
 
-function fixture(fetcher) {
+function fixture(fetcher, timers) {
   const spoken = [], reports = [];
   const audio = {
     paused: true, ended: false, currentTime: 0,
@@ -11,10 +11,82 @@ function fixture(fetcher) {
     removeAttribute() {}
   };
   const config = { source: 'auto', url: 'http://pc:8000', key: 'test', edgeVoice: 'en-GB-SoniaNeural' };
-  const engine = new EdgeSpeech({ speak(u) { spoken.push(u); }, cancel() {} }, () => config, m => reports.push(m), audio, fetcher);
+  const engine = new EdgeSpeech({ speak(u) { spoken.push(u); }, cancel() {} }, () => config, m => reports.push(m), audio, fetcher, timers);
   const utterance = { text: 'Listen carefully.', rate: 1, pitch: 1.4, voice: { name: 'Daniel' }, onend() {}, onerror() {} };
   return { engine, spoken, reports, audio, config, utterance };
 }
+
+function returnCheckFixture() {
+  const pending = new Map(); let id = 0, requests = 0;
+  const timers = {
+    setTimeout(fn) { pending.set(++id, fn); return id; },
+    clearTimeout(key) { pending.delete(key); }
+  };
+  const f = fixture(async () => {
+    requests++; return { ok: true, blob: async () => new Blob(['audio']) };
+  }, timers);
+  const { Player } = require('./speech.js');
+  const player = new Player(f.engine, text => ({ text }), () => ({ rate: 1, gap: 0 }), () => {});
+  player.setText('An interrupted article.');
+  return { ...f, player, pending, requests: () => requests };
+}
+
+test('return after a missed pause event offers resume without replacing the audio', async () => {
+  const f = returnCheckFixture();
+  f.player.play(); await new Promise(setImmediate);
+  const source = f.audio.src;
+  f.audio.currentTime = 4.2;
+  f.audio.paused = true; // The OS paused audio without dispatching onpause.
+  assert.equal(f.player.state, 'speaking');
+  f.engine.reconcilePlayback();
+  assert.equal(f.player.state, 'paused'); assert.equal(f.pending.size, 0);
+  f.player.play();
+  assert.equal(f.player.state, 'speaking'); assert.equal(f.audio.paused, false);
+  assert.equal(f.audio.currentTime, 4.2); assert.equal(f.audio.src, source);
+  assert.equal(f.requests(), 1); f.player.stop();
+});
+
+test('return after audio focus freezes playback offers resume even when paused is false', async () => {
+  const f = returnCheckFixture();
+  f.player.play(); await new Promise(setImmediate);
+  f.audio.currentTime = 2.5;
+  f.engine.reconcilePlayback();
+  assert.equal(f.player.state, 'speaking');
+  [...f.pending.values()][0](); // Time did not advance during the return check.
+  assert.equal(f.player.state, 'paused'); assert.equal(f.audio.paused, true);
+  f.player.play();
+  assert.equal(f.player.state, 'speaking'); assert.equal(f.audio.currentTime, 2.5);
+  assert.equal(f.requests(), 1); f.player.stop();
+});
+
+test('return does not interrupt progressing audio, loading, or completed playback', async () => {
+  const f = returnCheckFixture();
+  f.player.play();
+  f.engine.reconcilePlayback(); assert.equal(f.pending.size, 0); // Still loading.
+  await new Promise(setImmediate);
+  f.engine.reconcilePlayback();
+  f.audio.currentTime += 0.5;
+  [...f.pending.values()][0]();
+  assert.equal(f.player.state, 'speaking'); assert.equal(f.audio.paused, false);
+  f.audio.ended = true; f.audio.onended();
+  f.engine.reconcilePlayback();
+  assert.equal(f.player.state, 'ended'); f.player.stop();
+});
+
+test('return checks are canceled when hidden, paused, stopped, or replaced by another segment', async () => {
+  const f = returnCheckFixture();
+  f.player.play(); await new Promise(setImmediate);
+  f.engine.reconcilePlayback(); f.engine.reconcilePlayback();
+  assert.equal(f.pending.size, 1);
+  f.engine.clearReturnCheck(); assert.equal(f.pending.size, 0);
+  f.engine.reconcilePlayback(); f.player.pause(); assert.equal(f.pending.size, 0);
+  f.player.play(); f.engine.reconcilePlayback();
+  const stale = [...f.pending.values()][0];
+  f.player.stop(); assert.equal(f.pending.size, 0);
+  f.player.play(); await new Promise(setImmediate);
+  stale(); assert.equal(f.player.state, 'speaking'); assert.equal(f.audio.paused, false);
+  f.player.stop();
+});
 
 test('PC failure falls back with same text and settings, without retrying every segment', async () => {
   let calls = 0;

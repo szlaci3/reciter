@@ -39,6 +39,8 @@ Mobile browsers can require another tap before audio starts, including after an 
 
 AirPods retest: pause with the button, resume with one tap, and check that speech continues in place and the Pause button becomes available. Then pause with one tap and resume with the button. Also check Stop → Play restarts the passage, and pause during preparation stays silent until resumed.
 
+When returning to Reciter, the page checks for interrupted playback. If Edge audio is paused, or its playback position remains frozen for 1.5 seconds after returning, the interface offers Resume while retaining the current audio and position. Playback that is still advancing continues normally. Phone speech is reconciled when the browser reports it paused. Retest on the phone: play in Reciter, start a YouTube video, return to Reciter, and press Resume once. Actual mobile audio-focus behavior still needs device verification; an interruption that silences audio while its reported position continues advancing cannot be detected by this check.
+
 ## Later: Netlify or Vercel frontend, PC speech service
 
 Yes: hosting the frontend independently means it can load and use Daniel while the PC is off. Build public files with:

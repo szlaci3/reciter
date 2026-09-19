@@ -1,8 +1,8 @@
 /* Adapter keeps passage navigation/cancellation shared with browser speech. */
 (function (root) {
   class EdgeSpeech {
-    constructor(native, config, report, audio, fetcher = fetch) {
-      Object.assign(this, { native, config, report, audio, fetcher });
+    constructor(native, config, report, audio, fetcher = fetch, timers = globalThis) {
+      Object.assign(this, { native, config, report, audio, fetcher, timers });
       this.generation = 0;
       this.failed = false;
       this.mode = null;
@@ -16,7 +16,37 @@
         this.paused = false; this.onPlaybackChange?.(false);
       };
     }
+    // Mobile audio interruptions do not always deliver a pause event. On return,
+    // reconcile the media state, then check for a clock frozen by lost audio focus.
+    reconcilePlayback() {
+      this.timers.clearTimeout(this.returnTimer);
+      if (this.mode === 'browser') {
+        if (this.native?.paused) {
+          this.paused = true; this.onPlaybackChange?.(true);
+        }
+        return;
+      }
+      if (this.mode !== 'edge' || this.audio.ended) return;
+      if (this.audio.paused) {
+        this.paused = true; this.onPlaybackChange?.(true); return;
+      }
+      if (this.paused) return;
+      const token = this.generation, position = this.audio.currentTime;
+      this.returnTimer = this.timers.setTimeout(() => {
+        if (token !== this.generation || this.mode !== 'edge' || this.paused || this.audio.ended) return;
+        if (this.audio.paused || this.audio.currentTime === position) {
+          this.pause();
+          this.onPlaybackChange?.(true);
+          this.report('Playback interrupted. Tap Resume to continue.');
+        }
+      }, 1500);
+    }
+    clearReturnCheck() {
+      this.timers.clearTimeout(this.returnTimer);
+      this.returnTimer = null;
+    }
     cancel() {
+      this.clearReturnCheck();
       this.mode = null;
       this.paused = false;
       this.generation++;
@@ -32,11 +62,13 @@
       this.native?.resume?.();
     }
     pause() {
+      this.clearReturnCheck();
       this.paused = true;
       if (this.mode === 'edge') this.audio.pause();
       if (this.mode === 'browser') this.native.pause();
     }
     resume() {
+      this.clearReturnCheck();
       this.paused = false;
       if (this.mode === 'edge') {
         const token = this.generation;
@@ -64,6 +96,7 @@
       catch { utterance.onerror({ error: 'Phone speech failed. Tap Play or choose another phone voice.' }); }
     }
     async speak(utterance) {
+      this.clearReturnCheck();
       const token = ++this.generation;
       this.mode = 'loading';
       this.paused = false;
