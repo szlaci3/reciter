@@ -4,8 +4,68 @@ import sys
 from unittest.mock import AsyncMock, patch
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from contextlib import redirect_stderr, redirect_stdout
+from io import StringIO
 from aiohttp.test_utils import AioHTTPTestCase
-from server import create_app, load_access_key, create_server_loop, console_wakeup, FRONTEND
+from server import create_app, load_access_key, create_server_loop, console_wakeup, server_config, main, FRONTEND
+
+
+CLOUD_KEY = 'AbCd_0123456789-xyz' * 3  # Test fixture only, never a deployed secret.
+
+
+class PublicConfigTest(unittest.TestCase):
+    def test_render_port_secret_and_exact_origins(self):
+        config = server_config([], {'RENDER': 'true', 'PORT': '10000',
+            'RECITER_ACCESS_KEY': CLOUD_KEY,
+            'RECITER_ALLOWED_ORIGINS': 'https://reciter.example/, https://second.example'})
+        self.assertTrue(config.public)
+        self.assertEqual(config.token, CLOUD_KEY)
+        self.assertEqual(config.port, 10000)
+        self.assertEqual(config.host, '0.0.0.0')
+        self.assertEqual(config.origin, ['https://reciter.example', 'https://second.example'])
+
+    def test_public_mode_fails_closed_without_valid_configuration(self):
+        valid = {'RECITER_ACCESS_KEY': CLOUD_KEY, 'RECITER_ALLOWED_ORIGINS': 'https://reciter.example'}
+        cases = [{'RENDER': 'true'}, {},
+                 {**valid, 'RECITER_ACCESS_KEY': 'abcd'},
+                 {**valid, 'RECITER_ACCESS_KEY': 'x' * 129},
+                 {**valid, 'RECITER_ACCESS_KEY': 'secret with spaces ' * 3},
+                 {**valid, 'RECITER_ALLOWED_ORIGINS': ''},
+                 {**valid, 'PORT': '0'}, {**valid, 'PORT': '65536'},
+                 {**valid, 'PORT': 'invalid'}]
+        for origin in ['*', 'http://reciter.example', 'https://*.example',
+                       'https://reciter.example/path', 'https://user:password@reciter.example',
+                       'https://reciter.example?query=1', 'https://reciter.example#fragment',
+                       'https://reciter.example:invalid']:
+            cases.append({**valid, 'RECITER_ALLOWED_ORIGINS': origin})
+        for env in cases:
+            with self.subTest(env_keys=list(env)), redirect_stderr(StringIO()) as errors:
+                with self.assertRaises(SystemExit) as result:
+                    server_config(['--public'], env)
+                self.assertEqual(result.exception.code, 2)
+                self.assertNotIn(CLOUD_KEY, errors.getvalue())
+        with redirect_stderr(StringIO()), self.assertRaises(SystemExit):
+            server_config([], {'RENDER': 'true'})
+
+    def test_lan_defaults_and_explicit_port_still_work(self):
+        config = server_config([], {})
+        self.assertFalse(config.public)
+        self.assertEqual(config.port, 8000)
+        config = server_config(['--port', '9000', '--origin', 'http://phone.example'], {'PORT': '10000'})
+        self.assertEqual(config.port, 9000)
+        self.assertEqual(config.origin, ['http://phone.example'])
+
+    def test_public_start_never_reads_local_key_or_prints_secret(self):
+        config = server_config(['--public'], {'RECITER_ACCESS_KEY': CLOUD_KEY,
+            'RECITER_ALLOWED_ORIGINS': 'https://reciter.example'})
+        with patch('server.server_config', return_value=config), patch('server.load_access_key') as local_key, \
+                patch('server.web.run_app') as run, patch('server.create_server_loop', return_value=None), \
+                redirect_stdout(StringIO()) as output:
+            main()
+        local_key.assert_not_called()
+        self.assertNotIn(CLOUD_KEY, output.getvalue())
+        self.assertEqual(run.call_args.kwargs['host'], '0.0.0.0')
+        self.assertIsNone(run.call_args.kwargs['access_log'])
 
 
 class AccessKeyTest(unittest.TestCase):
@@ -98,7 +158,8 @@ class ServiceTest(AioHTTPTestCase):
         self.assertEqual(response.status, 204)
         self.assertEqual(response.headers['Access-Control-Allow-Origin'], 'https://reciter.example')
         for path in ('/server.py', '/.reciter-token', '/requirements.txt', '/library.test.js',
-                     '/package.json', '/node_modules/dexie/dist/dexie.js'):
+                     '/package.json', '/node_modules/dexie/dist/dexie.js', '/render.yaml',
+                     '/.env', '/check_deployment.py', '/DEPLOY-RENDER.md'):
             self.assertEqual((await self.client.get(path)).status, 404)
         self.assertEqual((await self.client.get('/')).status, 200)
         for name in FRONTEND:
@@ -146,6 +207,64 @@ class ServiceTest(AioHTTPTestCase):
         for field, value in [('text', ''), ('text', 'x' * 2001), ('voice', 'unknown'), ('rate', 10)]:
             response = await self.client.post('/api/speech', json={**payload, field: value}, headers=headers)
             self.assertEqual(response.status, 400)
+
+
+class CloudServiceTest(AioHTTPTestCase):
+    async def get_application(self):
+        self.voices = AsyncMock(return_value=[{'ShortName': 'en-GB-SoniaNeural', 'Locale': 'en-GB', 'Gender': 'Female'}])
+        return create_app(CLOUD_KEY, ['https://reciter.example'], list_voices=self.voices)
+
+    async def test_health_is_public_and_does_not_contact_microsoft(self):
+        response = await self.client.get('/healthz')
+        self.assertEqual(response.status, 200)
+        self.assertEqual(await response.json(), {'status': 'ok'})
+        self.assertEqual(response.headers['Cache-Control'], 'no-store')
+        self.assertEqual((await self.client.head('/healthz')).status, 200)
+        self.voices.assert_not_awaited()
+
+    async def test_cloud_key_is_required_and_cors_works_behind_https_proxy(self):
+        for key in ['', 'abcd', CLOUD_KEY.lower(), 'non-ascii-\u00e9']:
+            response = await self.client.get('/api/voices', headers={'Authorization': 'Bearer ' + key})
+            self.assertEqual(response.status, 401)
+        self.voices.assert_not_awaited()
+        response = await self.client.options('/api/speech', headers={
+            'Origin': 'https://reciter.example', 'Access-Control-Request-Method': 'POST',
+            'Access-Control-Request-Headers': 'authorization,content-type'})
+        self.assertEqual(response.status, 204)
+        self.assertEqual(response.headers['Access-Control-Allow-Origin'], 'https://reciter.example')
+        response = await self.client.get('/api/voices', headers={
+            'Authorization': 'Bearer ' + CLOUD_KEY, 'Origin': 'https://reciter.example'})
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.headers['Access-Control-Allow-Origin'], 'https://reciter.example')
+        self.voices.assert_awaited_once()
+        response = await self.client.get('/api/voices', headers={'Authorization': 'Bearer ' + CLOUD_KEY,
+            'Origin': 'https://unapproved.example', 'X-Forwarded-Proto': 'https',
+            'X-Forwarded-Host': 'unapproved.example'})
+        self.assertEqual(response.status, 403)
+
+
+class DeploymentSmokeTest(AioHTTPTestCase):
+    async def get_application(self):
+        owner = self
+        self.texts = []
+
+        class FakeSpeech:
+            def __init__(self, text, *args, **kwargs):
+                owner.texts.append(text)
+
+            async def stream(self):
+                yield {'type': 'audio', 'data': b'x' * 2048}
+
+        voices = AsyncMock(return_value=[{'ShortName': 'en-GB-SoniaNeural', 'Locale': 'en-GB', 'Gender': 'Female'}])
+        return create_app(CLOUD_KEY, ['https://reciter.example'], FakeSpeech, voices)
+
+    async def test_deployment_checker_checks_real_http_routes_with_fake_upstream(self):
+        from live_smoke import check
+        with redirect_stdout(StringIO()) as output:
+            await check(self.client, CLOUD_KEY, 'https://reciter.example')
+        self.assertEqual(self.texts, ['Welcome to Reciter. Take a moment to listen, think, and remember.'])
+        self.assertIn('2048 audio bytes', output.getvalue())
+        self.assertNotIn(CLOUD_KEY, output.getvalue())
 
 
 if __name__ == '__main__':

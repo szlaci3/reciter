@@ -4,6 +4,12 @@ Your daily learning, spoken.
 
 Personal listening prototype with PC-hosted **edge-tts** and automatic browser-speech fallback. The usual setup is a running PC and a phone on the same Wi-Fi. No paid API key is needed. `edge-tts` uses Microsoft's online service through an unofficial integration; its future availability is not guaranteed.
 
+## Render deployment preparation
+
+See [Deploy to Render Free](DEPLOY-RENDER.md) for the prepared Blueprint, environment settings, and deployment checks. `render.yaml` configures a free Python service with a generated cloud access key, an explicit HTTPS frontend origin, Render's port, and `/healthz`. Automatic deployment is disabled. No cloud service has been created yet.
+
+Public startup (`--public`, Render's `RENDER=true`, or a configured `RECITER_ACCESS_KEY`) requires a 32–128-character URL-safe access key and at least one HTTPS origin in `RECITER_ALLOWED_ORIGINS` or `--origin`. Generate a random key; a long human password is not equivalent. Cloud keys stay in server environment settings and browser session storage, and are never printed by server startup or placed in the static build. The normal PC launcher keeps its four-letter LAN key. Host the frontend independently for Daniel to work while Render sleeps.
+
 ## Start on Windows
 
 From this folder in PowerShell:
@@ -23,7 +29,7 @@ python -m venv .venv
 ```
 
 1. Open `http://<PC-LAN-IP>:8000` on the phone using the same trusted Wi-Fi. Use `ipconfig` on the PC to find its Wi-Fi/Ethernet IPv4 address. Windows Firewall must allow this Python service on your private network.
-2. Expand **PC connection**, enter that same address, and type the **four lowercase letters** printed in the terminal. The key is stored in `.reciter-token` on the PC and in session storage for the browser tab. It is not included in the public build. Existing long keys are replaced automatically on server restart; restart the service and reload the phone page after updating.
+2. Expand **Speech service connection**, enter that same address, and type the **four lowercase letters** printed in the terminal. The LAN key is stored in `.reciter-token` on the PC and in session storage for the browser tab. It is not included in the public build. Cloud deployments instead use the full generated environment key.
 3. Tap **Connect / retry Edge**, choose an Edge voice, then **Play**. The initial choice is British English Sonia. Ryan, Thomas, Libby, and Maisie were also returned by the live voice-list test.
 4. Choose **Phone voice only** to switch manually. Daniel, British English, is the preferred phone voice at pitch 1.4. If unavailable, the page reports that and lets you choose another browser voice.
 
@@ -69,7 +75,7 @@ Once the service returns its voice catalogue, Reciter prepares the next unread s
 
 After connection retries are exhausted, phone speech continues. Use Connect to retry in the same listening session, or Stop then Play for a new attempt. A failed speech request after Edge has taken over still uses the existing latched fallback described below; this change does not repeatedly reconnect after every speech error. iPhone may request another tap when moving from phone speech to Edge: the existing playback-permission message asks for Play to retry the unread segment. This handoff still needs device verification.
 
-Reload the existing page to use this frontend change; no server restart or new dependencies are required. To listen during a future Render wake-up on a fresh visit, host the static frontend independently. Cloud deployment and stronger public-service authentication are still pending; the current four-letter key remains for the trusted LAN service.
+The warm-up flow is a frontend change; reload the existing page to use it. The subsequent Render preparation also changes Python startup and adds `/healthz`, so restart the service to use those backend changes. To listen during a future Render wake-up on a fresh visit, host the static frontend independently. Strong environment-key authentication and deployment configuration are prepared; actual cloud deployment is pending. The four-letter key remains for the trusted LAN service.
 
 Automatic mode requests MP3 audio from the PC. The PC sends the requested text to Microsoft's speech service. HTTP 502 from a speech request is retried once with identical text and settings: two attempts total, each with a 12-second client timeout. This applies to upcoming audio preparation as well as the current segment. If the retry fails, the existing phone fallback handles the same segment; authentication/validation errors, network failures, and client timeouts are not retried by this rule. Stop cancels pending work and prevents further attempts. The failed PC is not retried for every subsequent segment; a fresh Play or Connect attempt retries it. A PC restart may require Connect again to reload its voice catalogue.
 

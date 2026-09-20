@@ -230,6 +230,28 @@ function warmFixture() {
 }
 const okVoices = () => ({ ok: true, json: async () => [{ name: 'en-GB-SoniaNeural', locale: 'en-GB', gender: 'Female' }] });
 
+test('cloud credentials retain case and symbols in voice and speech requests', async () => {
+  const f = warmFixture();
+  f.config.url = 'https://speech.example';
+  f.config.key = 'AbCd_0123456789-xyz'.repeat(3);
+  assert.equal(EdgeSpeech.validAccessKey(f.config.key), true);
+  for (const bad of ['ABCD', 'short-key', 'x'.repeat(129), ' '.repeat(32)]) {
+    assert.equal(EdgeSpeech.validAccessKey(bad), false);
+  }
+  f.player.play(); f.requests[0].resolve(okVoices()); await tick();
+  for (const request of f.requests) assert.equal(request.options.headers.Authorization, 'Bearer ' + f.config.key);
+  assert.equal(f.requests.length, 2); f.player.stop();
+});
+
+test('cloud credentials are never sent over plain HTTP', async () => {
+  const f = warmFixture(); f.config.key = 'AbCd_0123456789-xyz'.repeat(3);
+  f.player.play(); await tick();
+  assert.equal(f.requests.length, 0); assert.equal(f.spoken.length, 1);
+  const result = await f.engine.requestAudio(f.utterance, f.config).result;
+  assert.match(result.error.message, /HTTPS/);
+  assert.equal(f.requests.length, 0); f.player.stop();
+});
+
 test('Daniel starts immediately while waking; Edge takes over at the next unread segment without loss', async () => {
   const f = warmFixture();
   f.player.play();

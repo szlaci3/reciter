@@ -64,6 +64,17 @@ test('Automatic Play speaks while connecting; Connect preserves playback and Pho
   assert.equal(requests.length, 2); assert.equal(p.spoken.length, 2);
 });
 
+test('cloud access key survives session restore and input without truncation or persistent export', async t => {
+  const key = 'AbCd_0123456789-xyz'.repeat(3);
+  const p = await page(t, { beforeApp(w) { w.sessionStorage.setItem('reciter-pc-key', key); } });
+  assert.equal(p.$('pc-key').value, key);
+  assert.equal(p.$('pc-key').type, 'password');
+  p.edit('pc-key', key + '_NEW');
+  assert.equal(p.$('pc-key').value, key + '_NEW');
+  assert.equal(p.w.sessionStorage.getItem('reciter-pc-key'), key + '_NEW');
+  assert.ok(!p.w.localStorage.getItem('reciter-listening-v1').includes(key));
+});
+
 test('library UI migrates text, creates and switches documents, and saves persistent identity', async t => {
   const p = await page(t);
   assert.equal(p.$('material').value, 'Legacy title.\n\nLegacy second passage.');

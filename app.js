@@ -12,7 +12,7 @@
   $('source').value = saved.source === 'browser' ? 'browser' : 'auto';
   $('pc-url').value = saved.pcUrl || (/^(localhost|127\.0\.0\.1|192\.168\.|10\.)/.test(location.hostname) ? location.origin : '');
   try { $('pc-key').value = sessionStorage.getItem('reciter-pc-key') || ''; } catch {}
-  if (!/^[a-z]{4}$/.test($('pc-key').value)) $('pc-key').value = '';
+  if (!EdgeSpeech.validAccessKey($('pc-key').value)) $('pc-key').value = '';
   let edgeVoice = saved.edgeVoice || 'en-GB-SoniaNeural';
   let libraryLoading = true;
   function edgeConfig() { return { warmup: true, source: $('source').value, url: $('pc-url').value.trim().replace(/\/$/, ''), key: $('pc-key').value.trim(), edgeVoice }; }
@@ -86,7 +86,6 @@
   }
   $('connect').addEventListener('click', connect);
   for (const id of ['pc-url', 'pc-key']) $(id).addEventListener('input', () => {
-    if (id === 'pc-key') $('pc-key').value = $('pc-key').value.toLowerCase().replace(/[^a-z]/g, '').slice(0, 4);
     player.stop(); engine.readyKey = null; engine.failed = true; save();
   });
   $('source').addEventListener('change', () => { player.stop(); engine.failed = false; save(); $('connection').textContent = 'Source changed. Press Play to listen.'; });

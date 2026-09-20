@@ -1,0 +1,17 @@
+# This file belongs at the root of the standalone Reciter repository.
+services:
+  - type: web
+    name: reciter-speech
+    runtime: python
+    plan: free
+    autoDeploy: false
+    buildCommand: pip install -r requirements.txt
+    startCommand: python server.py --public
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.14.4
+      - key: RECITER_ACCESS_KEY
+        generateValue: true
+      - key: RECITER_ALLOWED_ORIGINS
+        sync: false

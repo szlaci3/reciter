@@ -2,6 +2,9 @@
 (function (root) {
   const parsing = typeof module !== 'undefined' ? require('./speech.js') : root.ReciterSpeech;
   class EdgeSpeech {
+    static validAccessKey(key) {
+      return /^(?:[a-z]{4}|[A-Za-z0-9_-]{32,128})$/.test(key);
+    }
     constructor(native, config, report, audio, fetcher = fetch, timers = globalThis) {
       Object.assign(this, { native, config, report, audio, fetcher, timers });
       this.generation = 0;
@@ -55,8 +58,10 @@
       try {
         const address = new URL(c.url);
         if (!['http:', 'https:'].includes(address.protocol)) throw terminal('Use an HTTP or HTTPS service address.');
-        if (root.location?.protocol === 'https:' && address.protocol !== 'https:') throw terminal('Use an HTTPS service address with this hosted page.');
-        if (!/^[a-z]{4}$/.test(c.key)) throw terminal('Enter the four lowercase letters shown by the service.');
+        if ((root.location?.protocol === 'https:' || c.key?.length >= 32) && address.protocol !== 'https:') {
+          throw terminal('Use an HTTPS service address with a hosted page or cloud access key.');
+        }
+        if (!EdgeSpeech.validAccessKey(c.key)) throw terminal('Enter the service access key: four lowercase letters for your PC, or the full cloud key.');
         this.report('Starting speech service… Phone speech is available while it wakes.');
         // Six bounded requests plus five short delays allow about 87 seconds
         // for a sleeping host. This is independent of speech-request timeouts.
@@ -188,7 +193,7 @@
     browser(utterance, reason) {
       this.mode = 'browser';
       if (!this.native) {
-        utterance.onerror({ error: 'Browser speech unavailable. Connect the PC and retry.' });
+        utterance.onerror({ error: 'Browser speech unavailable. Connect the speech service and retry.' });
         return;
       }
       this.report(reason + ' Using ' + (utterance.voice?.name || 'browser default (Daniel unavailable)') + '.');
@@ -208,10 +213,12 @@
       // Store failures as results so speculative requests never reject unhandled.
       request.result = (async () => {
         try {
-          if (!c.url || !c.key || !c.edgeVoice) throw new Error('Configure and connect the PC first.');
+          if (!c.url || !c.key || !c.edgeVoice) throw new Error('Configure and connect the speech service first.');
           const base = new URL(c.url);
-          if (!['http:', 'https:'].includes(base.protocol)) throw new Error('Use an HTTP or HTTPS PC address.');
-          if (root.location?.protocol === 'https:' && base.protocol !== 'https:') throw new Error('The hosted page needs an HTTPS PC address.');
+          if (!['http:', 'https:'].includes(base.protocol)) throw new Error('Use an HTTP or HTTPS service address.');
+          if ((root.location?.protocol === 'https:' || c.key.length >= 32) && base.protocol !== 'https:') {
+            throw new Error('A hosted page or cloud access key needs an HTTPS service address.');
+          }
           for (let attempt = 1; attempt <= 2; attempt++) {
             controller.signal.throwIfAborted();
             // Each attempt gets its own timeout: a slow 502 must not consume
@@ -228,7 +235,7 @@
                 await response.body?.cancel();
                 continue;
               }
-              if (!response.ok) throw new Error('PC speech request failed (' + response.status + ')' +
+              if (!response.ok) throw new Error('Edge speech request failed (' + response.status + ')' +
                 (attempt === 2 ? ' after 2 attempts.' : '.'));
               return { blob: await response.blob() };
             } finally { clearTimeout(timeout); }
@@ -321,7 +328,7 @@
           utterance.onerror({ error: 'Tap Play again to allow audio, or switch to phone voice.' });
           return;
         }
-        fallback(error.name === 'AbortError' ? 'PC speech timed out.' : error.message);
+        fallback(error.name === 'AbortError' ? 'Edge speech timed out.' : error.message);
       }
     }
   }

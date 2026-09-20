@@ -4,10 +4,13 @@ import asyncio
 from collections import OrderedDict
 from contextlib import suppress
 import math
+import os
 from pathlib import Path
+import re
 import secrets
 import string
 import sys
+from urllib.parse import urlsplit
 
 from aiohttp import web
 import edge_tts
@@ -50,6 +53,43 @@ def load_access_key(path):
     return token
 
 
+def server_config(argv=None, environ=None):
+    """Resolve LAN or public configuration without reading/writing a key file."""
+    env = os.environ if environ is None else environ
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--host', default='0.0.0.0')
+    parser.add_argument('--port', type=int, default=env.get('PORT', '8000'))
+    parser.add_argument('--origin', action='append', default=[], help='Exact allowed frontend origin')
+    parser.add_argument('--public', action='store_true', help='Require a strong environment access key and HTTPS origins')
+    args = parser.parse_args(argv)
+    args.public = args.public or env.get('RENDER', '').lower() == 'true' or 'RECITER_ACCESS_KEY' in env
+    if not 1 <= args.port <= 65535:
+        parser.error('PORT must be between 1 and 65535.')
+    args.token = env.get('RECITER_ACCESS_KEY', '')
+    if args.public and not re.fullmatch(r'[A-Za-z0-9_-]{32,128}', args.token):
+        parser.error('Public mode requires RECITER_ACCESS_KEY: 32–128 random URL-safe characters. The LAN key is not accepted.')
+    origins = args.origin + [value.strip() for value in env.get('RECITER_ALLOWED_ORIGINS', '').split(',') if value.strip()]
+    args.origin = []
+    for origin in origins:
+        try:
+            parsed = urlsplit(origin)
+            valid = (parsed.scheme in (('https',) if args.public else ('http', 'https'))
+                     and parsed.hostname and not parsed.username and not parsed.password
+                     and parsed.path in ('', '/') and not parsed.query and not parsed.fragment
+                     and '*' not in origin and not any(char.isspace() for char in origin))
+            parsed.port  # Reject malformed port numbers too.
+        except ValueError:
+            valid = False
+        if not valid:
+            parser.error('Allowed origins must be exact website origins without paths, credentials or wildcards; public mode requires HTTPS.')
+        normalized = origin.rstrip('/')
+        if normalized not in args.origin:
+            args.origin.append(normalized)
+    if args.public and not args.origin:
+        parser.error('Public mode requires RECITER_ALLOWED_ORIGINS or --origin for the HTTPS frontend.')
+    return args
+
+
 def create_app(token, origins=(), communicate=edge_tts.Communicate, list_voices=edge_tts.list_voices):
     cache = OrderedDict()
     voice_names = set()
@@ -64,8 +104,8 @@ def create_app(token, origins=(), communicate=edge_tts.Communicate, list_voices=
         if request.method == 'OPTIONS':
             response = web.Response(status=204)
         elif request.path.startswith('/api/') and not secrets.compare_digest(
-                request.headers.get('Authorization', ''), f'Bearer {token}'):
-            response = web.json_response({'error': 'Check your PC access key'}, status=401)
+                request.headers.get('Authorization', '').encode('utf-8'), f'Bearer {token}'.encode('utf-8')):
+            response = web.json_response({'error': 'Check your speech service access key'}, status=401)
         else:
             try:
                 response = await handler(request)
@@ -88,6 +128,10 @@ def create_app(token, origins=(), communicate=edge_tts.Communicate, list_voices=
                                        'gender': v['Gender']} for v in entries])
         except Exception:
             return web.json_response({'error': 'Microsoft voice list unavailable'}, status=502)
+
+    async def health(request):
+        # Render probes process health without credentials or Microsoft traffic.
+        return web.json_response({'status': 'ok'})
 
     async def speech(request):
         try:
@@ -145,6 +189,7 @@ def create_app(token, origins=(), communicate=edge_tts.Communicate, list_voices=
     app = web.Application(middlewares=[access], client_max_size=16384)
     if sys.platform == 'win32':
         app.cleanup_ctx.append(console_wakeup)
+    app.router.add_get('/healthz', health)
     app.router.add_get('/api/voices', voices)
     app.router.add_post('/api/speech', speech)
     app.router.add_route('OPTIONS', '/api/{name}', options)
@@ -153,16 +198,19 @@ def create_app(token, origins=(), communicate=edge_tts.Communicate, list_voices=
     return app
 
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--host', default='0.0.0.0')
-    parser.add_argument('--port', type=int, default=8000)
-    parser.add_argument('--origin', action='append', default=[], help='Allowed frontend origin, e.g. https://reciter.example')
-    args = parser.parse_args()
-    token_file = ROOT / '.reciter-token'
-    token = load_access_key(token_file)
-    print(f'PC access key (paste into Reciter): {token}')
-    print('Open http://<PC-LAN-IP>:' + str(args.port) + ' on your phone, on the same Wi-Fi.')
+def main():
+    args = server_config()
+    if args.public:
+        token = args.token
+        print('Public speech service starting. Access key is configured through the environment.')
+    else:
+        token = load_access_key(ROOT / '.reciter-token')
+        print(f'PC access key (paste into Reciter): {token}')
+        print('Open http://<PC-LAN-IP>:' + str(args.port) + ' on your phone, on the same Wi-Fi.')
     print('Press Ctrl+C to stop (active requests get up to 3 seconds to finish).')
     web.run_app(create_app(token, args.origin), host=args.host, port=args.port,
                 access_log=None, loop=create_server_loop(), shutdown_timeout=3)
+
+
+if __name__ == '__main__':
+    main()

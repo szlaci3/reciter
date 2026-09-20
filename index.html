@@ -71,15 +71,15 @@ Choose a short passage you want to learn today. Listen once for the main idea, t
     <section aria-labelledby="voice-heading">
       <h2 id="voice-heading">Make it comfortable</h2>
       <label for="source">Speech source</label><select id="source"><option value="auto">Edge · automatic phone fallback</option><option value="browser">Phone voice only</option></select>
-      <p id="connection" class="hint" role="status">Connect your PC to load Edge voices, or use the phone voice.</p>
+      <p id="connection" class="hint" role="status">Connect your speech service to load Edge voices, or use the phone voice.</p>
       <p class="hint">Automatic mode uses your phone voice while the service wakes, then switches after a spoken segment when Edge audio is ready. If your phone asks, tap Play to allow Edge audio.</p>
-      <details><summary>PC connection</summary>
-        <label for="pc-url">PC service address</label><input id="pc-url" type="url" placeholder="http://192.168.1.10:8000" autocomplete="off">
-        <label for="pc-key">PC access key · four lowercase letters</label><input id="pc-key" type="text" maxlength="4" pattern="[a-z]{4}" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="off" placeholder="abcd">
-        <p class="hint">Enter the four letters shown when you start the PC service. They are kept for this tab’s session. A hosted HTTPS website needs an HTTPS PC address.</p>
+      <details><summary>Speech service connection</summary>
+        <label for="pc-url">Service address · PC or cloud</label><input id="pc-url" type="url" placeholder="https://your-service.onrender.com" autocomplete="off">
+        <label for="pc-key">Service access key</label><input id="pc-key" type="password" maxlength="128" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="off" placeholder="Paste your access key">
+        <p class="hint">For your PC, enter its four lowercase letters. For cloud hosting, paste the full access key, preserving capitals and symbols. The key is kept for this tab’s session. A hosted HTTPS page needs an HTTPS service address.</p>
         <button id="connect">Connect / retry Edge</button>
       </details>
-      <label for="edge-voice">Edge voice</label><select id="edge-voice"><option value="">Connect PC to load voices…</option></select>
+      <label for="edge-voice">Edge voice</label><select id="edge-voice"><option value="">Connect service to load voices…</option></select>
       <label for="voice">Phone / fallback voice</label><select id="voice"><option value="">Loading voices…</option></select>
       <p id="voice-note" class="hint"></p>
       <div class="settings">
@@ -98,7 +98,7 @@ Choose a short passage you want to learn today. Listen once for the main idea, t
       <p id="preview"></p>
       <p class="hint">Keep this page open for the first test. Screen locking, switching apps, and AirPods controls still need testing on your phone.</p>
     </section>
-    <footer>Edge speech sends text to Microsoft through your PC. Phone speech uses your browser’s voices. No paid speech API is configured.</footer>
+    <footer>Edge speech sends text to Microsoft through your configured speech service. Phone speech uses your browser’s voices. No paid speech API is configured.</footer>
   </main>
   <audio id="edge-audio" preload="auto"></audio>
   <script>
