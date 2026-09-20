@@ -10,7 +10,23 @@ The Blueprint generates `RECITER_ACCESS_KEY` as a secret and asks for `RECITER_A
 
 The frontend refuses to send a cloud key over plain HTTP, even when the frontend itself is loaded from a local HTTP address.
 
-Render's configuration schema and runtime availability must still be confirmed in its deployment preview: this environment could not retrieve Render's live documentation. Local checks cover the configured Python runtime and application behavior, not Render's control plane.
+The user deployed this configuration successfully at `https://reciter.onrender.com` and verified it from the Netlify frontend on mobile. The service's `/healthz`, authentication, CORS, voice loading and Edge speech path worked. A cold/waking service begins with Daniel and transitions to Sonia; this is expected. Local checks still cover the configured Python runtime and application behavior, not every Render control-plane detail.
+
+## Billing and usage monitoring
+
+The account requires **Billing Information** for this service, and the user must monitor it. The user reports an extra bandwidth charge of **$0.15 per 1 GB** beyond the included allowance. Usage metrics may be delayed by up to **two hours**, so the dashboard is not a real-time spending alarm. Review the account billing page and service usage regularly, especially after testing or extended listening.
+
+Current reported usage at the time of deployment verification:
+
+| Metric | Usage | Allowance/context |
+| --- | ---: | --- |
+| Included Bandwidth | 2 MB | 5 GB |
+| HTTP Responses | 2 MB | Included in the bandwidth figure above |
+| WebSocket Responses | 0 MB | None used |
+| Service-Initiated | 0 MB | None used |
+| Service-Initiated (Private Link) | 0 MB | None used |
+
+These figures are a snapshot supplied by the user, not a guaranteed current dashboard value. Keep the service's bandwidth and billing limits in mind before large listening tests or sharing the URL. This application does not configure an account-level spending cap.
 
 ## Deployment steps
 
@@ -19,7 +35,7 @@ Render's configuration schema and runtime availability must still be confirmed i
 3. In the preview, confirm **one Free web service**, no paid resources, and automatic deployments disabled. Supply the frontend origin when prompted. Keep the plan Free and check the workspace's current bandwidth allowance/billing settings before activation; the supplied research reports 5 GB/month and possible bandwidth charges with a payment method attached. This configuration does not set an account-wide spending cap.
 4. Deploy and wait for `/healthz` to return `{"status":"ok"}` at the assigned `https://…onrender.com` address. Health checks test the process only; they do not contact Microsoft or establish speech availability. Do not create scheduled keep-alive pings.
 5. Privately copy the generated `RECITER_ACCESS_KEY` from Render's environment settings. In the independently hosted Reciter page, open **Speech service connection**, paste the Render HTTPS service address and the **full** key, and choose Automatic. The password field preserves case, digits, `_` and `-`; credentials remain in that browser tab's session storage, not in exported backups or frontend builds.
-6. Tap Connect or Play. Test voice loading and Sonia playback from the actual deployment; Microsoft's unofficial Edge speech service may behave differently from a cloud network. On a cold start, the app plays Daniel/the selected phone voice while checking readiness, then switches at an unread segment boundary once matching audio is ready. iPhone may require another tap to authorize audio.
+6. Tap Connect or Play. Test voice loading and Sonia playback from the actual deployment; Microsoft's unofficial Edge speech service may behave differently from a cloud network. On a cold start, the app plays Daniel/the selected phone voice while checking readiness, then switches at an unread segment boundary once matching audio is ready. A refresh repeats this warm-up; a ready service can start a different document with Sonia. iPhone may require another tap to authorize audio.
 
 The same Python process can serve its allowlisted frontend files, but a fresh visit to that Render URL must wait for the server to wake. To test the frontend there, add its exact HTTPS origin to `RECITER_ALLOWED_ORIGINS`; incoming proxy headers are deliberately not used to expand the origin allowlist. Prefer an independent static frontend for everyday use.
 
