@@ -115,3 +115,6 @@ Optional live check (sends one generic sample sentence to Microsoft):
 ```
 
 Live verification on 2026-09-19 successfully listed British neural voices and generated 32,112 bytes of Sonia MP3 audio through the service. No browser interaction or listening-quality test was performed.
+
+
+Startup diagnostics include the script error line/column and a short source excerpt when available. A fresh fetch of the same script URL reports whether its normalized source fingerprint matches the bundled version; this checks the new response, not the original failed execution. `npm run vendor` also updates the expected fingerprint in `index.html`. The iOS 26.6 Edge startup failure remains under investigation; preserve unsaved text before reloading and keep the same site address/browser so existing storage remains accessible.

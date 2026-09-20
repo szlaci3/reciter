@@ -103,10 +103,12 @@ class ServiceTest(AioHTTPTestCase):
         self.assertEqual((await self.client.get('/')).status, 200)
         for name in FRONTEND:
             self.assertEqual((await self.client.get('/' + name)).status, 200, name)
-        for path in ('/dexie.js?v=4.4.6', '/library.js?v=1'):
+        for path in ('/dexie.js?v=4.4.6-diag2', '/library.js?v=1'):
             response = await self.client.get(path)
             self.assertEqual(response.status, 200)
             self.assertIn('javascript', response.headers['Content-Type'])
+            local = Path(__file__).parent / path.split('?')[0].lstrip('/')
+            self.assertEqual(await response.read(), local.read_bytes())
 
     async def test_voice_validation_and_audio_cache(self):
         headers = {'Authorization': 'Bearer abcd'}

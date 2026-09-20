@@ -121,7 +121,7 @@ test('Retry repeats a failed document creation without losing the selected docum
 test('missing Dexie is identified as a script failure, not a blocked database', async t => {
   const p = await page(t, { beforeApp(w) {
     w.Dexie = undefined;
-    w.fetch = async () => ({ status: 404, headers: { get: () => 'text/plain' } });
+    w.fetch = async () => ({ status: 404, headers: { get: () => 'text/plain' }, text: async () => 'Not found' });
   } });
   assert.match(p.$('save-status').textContent, /loading library scripts.*dexie.js: HTTP 404/);
   assert.equal(p.$('material').value, 'Legacy title.\n\nLegacy second passage.');
@@ -146,8 +146,44 @@ test('dependency diagnostics distinguish a served script that failed to execute'
   const p = await page(t, { beforeApp(w) {
     w.Dexie = undefined;
     w.reciterScriptErrors = { 'dexie.js': 'SecurityError: Example browser restriction' };
-    w.fetch = async () => ({ status: 200, headers: { get: () => 'text/javascript' } });
+    w.fetch = async () => ({ status: 200, headers: { get: () => 'text/javascript' }, text: async () => source('dexie.js') });
   } });
   assert.match(p.$('save-status').textContent, /dexie.js: HTTP 200, text\/javascript; SecurityError/);
   assert.equal(p.$('material').disabled, false);
+});
+
+test('dependency diagnostics capture browser location and recheck the versioned source', async t => {
+  const p = await page(t, { beforeApp(w) {
+    w.Dexie = undefined;
+    w.eval(w.document.querySelector('script:not([src])').textContent);
+    w.dispatchEvent(new w.ErrorEvent('error', {
+      filename: 'http://reciter.test/dexie.js?v=4.4.6-diag2',
+      message: "SyntaxError: Unexpected keyword 'function'", lineno: 18, colno: 10
+    }));
+    w.fetch = async (url, options) => {
+      assert.equal(url, 'http://reciter.test/dexie.js?v=4.4.6-diag2');
+      assert.equal(options.cache, 'no-store');
+      // Checkout line endings must not cause a false mismatch.
+      return { status: 200, headers: { get: () => 'text/javascript' },
+        text: async () => source('dexie.js').replace(/\r?\n/g, '\r\n') };
+    };
+  } });
+  const message = p.$('save-status').textContent;
+  assert.match(message, /at line 18:10/);
+  assert.match(message, /recheck matches bundled source/);
+  assert.match(message, /source near error:.*function/);
+  assert.equal(p.store, undefined);
+});
+
+test('dependency diagnostics flag changed contents without executing the fetched source', async t => {
+  const p = await page(t, { beforeApp(w) {
+    w.Dexie = undefined;
+    w.fetch = async () => ({ status: 200, headers: { get: () => 'text/javascript' },
+      text: async () => 'window.unexpectedExecution = true;' });
+  } });
+  assert.match(p.$('save-status').textContent, /DIFFERS from bundled source/);
+  assert.equal(p.w.unexpectedExecution, undefined);
+  assert.equal(p.store, undefined);
+  assert.equal(JSON.parse(p.w.localStorage.getItem('reciter-listening-v1')).text,
+    'Legacy title.\n\nLegacy second passage.');
 });

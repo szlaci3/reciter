@@ -60,10 +60,21 @@
           const controller = new AbortController();
           const timeout = setTimeout(() => controller.abort(), 5000);
           try {
-            const response = await fetch(name + '?check=1', { cache: 'no-store', signal: controller.signal });
+            const script = Array.from(document.scripts).find(tag =>
+              tag.src && new URL(tag.src).pathname.split('/').pop() === name);
+            const response = await fetch(script?.src || name, { cache: 'no-store', signal: controller.signal });
             const type = response.headers?.get('content-type') || 'unknown content type';
-            await response.body?.cancel();
-            return `${name}: HTTP ${response.status}, ${type}${failure ? '; ' + failure : '; script did not initialize'}`;
+            const source = (await response.text()).replace(/\r\n/g, '\n');
+            let hash = 2166136261;
+            for (let i = 0; i < source.length; i++) hash = Math.imul(hash ^ source.charCodeAt(i), 16777619);
+            const fingerprint = source.length + ':' + (hash >>> 0).toString(16);
+            const expected = script?.dataset.sourceFingerprint;
+            const identity = expected ? (fingerprint === expected ? 'matches bundled source' : 'DIFFERS from bundled source ' + expected) : 'source fingerprint';
+            const location = root.reciterScriptLocations?.[name];
+            const line = location?.line && source.split('\n')[location.line - 1];
+            const start = Math.max(0, (location?.column || 1) - 61);
+            const excerpt = line ? '; source near error: ' + line.slice(start, start + 160).trim() : '';
+            return `${name}: HTTP ${response.status}, ${type}${failure ? '; ' + failure : '; script did not initialize'}; recheck ${identity} (${fingerprint})${excerpt}`;
           } catch (error) {
             return `${name}: ${failure || 'script unavailable'}; fetch check: ${error.message}`;
           } finally { clearTimeout(timeout); }

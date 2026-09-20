@@ -63,15 +63,18 @@ Choose a short passage you want to learn today. Listen once for the main idea, t
   <script>
     // Capture dependency load/evaluation errors before the library starts.
     window.reciterScriptErrors = {};
+    window.reciterScriptLocations = {};
     window.addEventListener('error', function (event) {
       var source = event.filename || (event.target && event.target.src) || '';
       var name = source.split('/').pop().split('?')[0];
       if (name === 'dexie.js' || name === 'library.js') {
-        window.reciterScriptErrors[name] = event.message || 'The browser could not load this script.';
+        window.reciterScriptErrors[name] = (event.message || 'The browser could not load this script.')
+          + (event.lineno ? ' at line ' + event.lineno + ':' + (event.colno || 0) : '');
+        window.reciterScriptLocations[name] = { line: event.lineno, column: event.colno };
       }
     }, true);
   </script>
-  <script src="dexie.js?v=4.4.6"></script><script src="library.js?v=1"></script><script src="library-ui.js"></script>
+  <script src="dexie.js?v=4.4.6-diag2" data-source-fingerprint="275222:d069eb69"></script><script src="library.js?v=1"></script><script src="library-ui.js?v=diag2"></script>
   <script src="speech.js"></script><script src="edge-speech.js"></script><script src="app.js"></script>
 </body>
 </html>
