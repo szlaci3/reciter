@@ -155,3 +155,15 @@ Startup diagnostics include the script error line/column and a short source exce
 
 
 The phone subsequently returned a different Dexie source fingerprint with unchanged length and a displaced function. The PC server now sends allowlisted static files as buffered immutable bytes, bypassing the suspected Windows selector-loop/sendfile transfer path. **Restart `start.ps1` for this server fix**, then reload the same Edge page after copying unsaved text. Failure diagnostics show `delivery buffered-v1` when this server code is active. The user confirmed mobile startup works in both Edge and Chrome. No database reset or Dexie version change was involved.
+
+## Daily learning packages
+
+Import a JSON learning package under **Daily listening**. Review and apply it, then open its dated card to see Must / Should / Can topics. Tap a topic to listen, or use the package Play button to start the first unfinished topic. Playback continues through the sections; a completed package can be replayed. The bottom player and package button control the same audio.
+
+Progress saves automatically. Reopening restores the current spoken-segment boundary without autoplay; a short fragment may repeat. Export listening progress and give that JSON file to the preparation skill in Codex. Ratings and full source versions stay there.
+
+Reimporting a package updates matching topics. Unchanged text retains progress; changed text starts afresh. Trash updates are explicit. For corrections, use the preparation skill so the full and shortened versions agree. Conflicting mobile edits are preserved and reported.
+
+Database backups now include packages and progress (schema 3); older schema-2 backups remain importable. **Import learning package** is separate from backup **Add to database**, which retains its existing conflict choices.
+
+For this update, reload the static frontend. Restart the local Python server or manually deploy Render to serve the new JavaScript files from those origins. Real iPhone playback and file-picker verification remains necessary.

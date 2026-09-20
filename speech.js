@@ -71,11 +71,27 @@
       this.synth.cancel();
       this.utterance = null;
     }
-    setText(text) { this.stop(); this.items = passages(text); this.index = 0; this.update(); }
+    setText(text) { this.stop(); this.items = passages(text); this.index = 0; this.heardThrough = 0; this.resumeOffset = 0; this.update(); }
+    passageStart(index = this.index) { return this.items.slice(0, index).reduce((n, text) => n + text.length + 2, 0); }
+    checkpoint(completed = false) {
+      const offset = this.passageStart() + (this.partStarts?.[this.part] ?? this.resumeOffset ?? 0);
+      return { offset, heardThrough: this.heardThrough || 0, completed };
+    }
+    restoreCheckpoint(progress) {
+      this.stop(); this.partStarts = null;
+      this.heardThrough = progress?.heardThrough || 0;
+      let offset = progress?.offset || 0;
+      const length = this.items.join('\n\n').length;
+      if (offset >= length) offset = this.heardThrough < length ? this.heardThrough : this.passageStart(Math.max(0, this.items.length - 1));
+      this.index = this.items.findIndex((text, i) => this.passageStart(i) + text.length > offset);
+      if (this.index < 0) this.index = 0;
+      this.resumeOffset = Math.max(0, Math.min(this.items[this.index]?.length || 0, offset - this.passageStart()));
+      this.update();
+    }
     stop() { this.invalidate(); this.state = 'idle'; this.part = 0; this.update(); }
     select(index) {
       const active = this.state === 'speaking' || this.state === 'waiting';
-      this.stop(); this.index = Math.max(0, Math.min(index, this.items.length - 1));
+      this.stop(); this.resumeOffset = 0; this.partStarts = null; this.index = Math.max(0, Math.min(index, this.items.length - 1));
       if (active) this.play(); else this.update();
     }
     play() {
@@ -83,7 +99,7 @@
       if (this.state === 'paused' && this.utterance) {
         this.state = 'speaking'; this.update(); this.synth.resume(); return;
       }
-      if (this.state === 'ended') { this.index = 0; this.part = 0; }
+      if (this.state === 'ended') { this.index = 0; this.part = 0; this.resumeOffset = 0; }
       this.speak();
     }
     pause() {
@@ -98,7 +114,17 @@
       // Freeze the current passage's boundaries across fallback and resume so
       // changing engines cannot reinterpret the current part index.
       const split = text => this.synth.segmentText?.(text) ?? segments(text);
-      const parts = this.part === 0 ? (this.parts = split(this.items[this.index])) : this.parts;
+      if (this.part === 0) {
+        const start = this.resumeOffset || 0;
+        this.parts = split(this.items[this.index].slice(start));
+        let cursor = start;
+        this.partStarts = this.parts.map(text => {
+          const at = this.items[this.index].indexOf(text, cursor); cursor = at + text.length; return at;
+        });
+        this.resumeOffset = 0;
+      }
+      const parts = this.parts;
+      if (!parts.length) { this.state = 'ended'; this.update(); return; }
       const settings = this.settings();
       const utterance = this.makeUtterance(parts[this.part]);
       this.utterance = utterance;
@@ -107,10 +133,21 @@
       utterance.pitch = settings.pitch; utterance.rate = settings.rate;
       utterance.onend = () => {
         if (token !== this.generation) return;
+        const start = this.passageStart() + this.partStarts[this.part];
+        const end = start + parts[this.part].length;
+        const full = this.items.join('\n\n');
+        if (start <= (this.heardThrough || 0) || !full.slice(this.heardThrough || 0, start).trim()) {
+          this.heardThrough = Math.max(this.heardThrough || 0, end);
+        }
+        this.onCheckpoint?.({ offset: end, heardThrough: this.heardThrough || 0, completed: false });
         this.utterance = null;
         if (++this.part < parts.length) { this.speak(); return; }
         this.part = 0;
-        if (this.index + 1 >= this.items.length) { this.synth.finishSession?.(); this.state = 'ended'; this.update(); return; }
+        if (this.index + 1 >= this.items.length) {
+          this.synth.finishSession?.(); this.state = 'ended'; this.update();
+          this.onCheckpoint?.({ offset: full.length, heardThrough: this.heardThrough || 0, completed: this.heardThrough === full.length });
+          this.onDocumentEnd?.(); return;
+        }
         this.index++; this.state = 'waiting'; this.update();
         const gap = this.settings().gap * 1000;
         // A zero-length break needs no background timer between recordings.
@@ -124,6 +161,7 @@
         this.invalidate(); this.state = 'error'; this.update(event.error || 'unknown');
       };
       this.state = 'speaking'; this.update();
+      this.onCheckpoint?.(this.checkpoint());
       const nextText = parts[this.part + 1] ?? (this.index + 1 < this.items.length
         ? split(this.items[this.index + 1])[0] : null);
       const next = nextText ? { text: nextText, rate: settings.rate } : null;

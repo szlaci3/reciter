@@ -11,6 +11,15 @@
 <body>
   <main>
     <header><span class="eyebrow">LISTENING PROTOTYPE</span><h1>Reciter</h1><p>Your daily learning, spoken.</p></header>
+    <section id="learning-section" aria-labelledby="learning-heading">
+      <h2 id="learning-heading">Daily listening</h2>
+      <div class="controls"><button id="import-package" disabled>Import learning package</button><button id="export-progress" disabled>Export listening progress</button></div>
+      <input id="package-file" type="file" accept=".json,application/json" aria-label="Choose a learning package" hidden>
+      <a id="download-progress" class="backup-download" hidden>Save progress file</a>
+      <p id="package-status" class="hint" role="status" aria-live="polite">Import a package prepared in Codex.</p>
+      <div id="package-review" hidden><p id="package-summary"></p><div class="controls"><button id="apply-package">Import package</button><button id="cancel-package">Cancel</button></div></div>
+      <div id="package-list"></div>
+    </section>
     <section aria-labelledby="library-heading">
       <div class="section-heading"><div><h2 id="library-heading">Your library</h2><p id="document-count" class="hint">Loading documents…</p></div><button id="new-document" disabled>+ New document</button></div>
       <div class="library-tools">
@@ -67,6 +76,7 @@ Choose a short passage you want to learn today. Listen once for the main idea, t
       <p id="save-status" class="hint" role="status" aria-live="polite">Opening your library…</p>
       <button id="retry-save" hidden>Retry</button>
       <p id="autosave-note" class="hint">Changes save automatically. Editing text stops playback; renaming keeps your place.</p>
+      <details id="document-sources" hidden><summary>Sources</summary><ul id="source-links"></ul></details>
     </section>
     <section aria-labelledby="voice-heading">
       <h2 id="voice-heading">Make it comfortable</h2>
@@ -94,9 +104,9 @@ Choose a short passage you want to learn today. Listen once for the main idea, t
       <p id="editing-document"></p>
       <p id="status" role="status" aria-live="polite">Ready</p>
       <div class="controls"><button id="previous" aria-label="Previous passage">← Previous</button><button id="play" class="primary">Play</button><button id="pause" disabled>Pause</button><button id="stop" disabled>Stop</button><button id="next" aria-label="Next passage">Next →</button></div>
-      <label for="passage">Current passage</label><select id="passage"></select>
+      <details class="player-details"><summary>Passage and text</summary><label for="passage">Current passage</label><select id="passage"></select>
       <p id="preview"></p>
-      <p class="hint">Keep this page open for the first test. Screen locking, switching apps, and AirPods controls still need testing on your phone.</p>
+      </details>
     </section>
     <footer>Edge speech sends text to Microsoft through your configured speech service. Phone speech uses your browser’s voices. No paid speech API is configured.</footer>
   </main>
@@ -108,14 +118,14 @@ Choose a short passage you want to learn today. Listen once for the main idea, t
     window.addEventListener('error', function (event) {
       var source = event.filename || (event.target && event.target.src) || '';
       var name = source.split('/').pop().split('?')[0];
-      if (name === 'dexie.js' || name === 'library.js') {
+      if (['dexie.js', 'learning.js', 'library.js', 'package-ui.js'].includes(name)) {
         window.reciterScriptErrors[name] = (event.message || 'The browser could not load this script.')
           + (event.lineno ? ' at line ' + event.lineno + ':' + (event.colno || 0) : '');
         window.reciterScriptLocations[name] = { line: event.lineno, column: event.colno };
       }
     }, true);
   </script>
-  <script src="dexie.js?v=4.4.6-diag2" data-source-fingerprint="275222:d069eb69"></script><script src="library.js?v=3"></script><script src="library-ui.js?v=3"></script>
-  <script src="speech.js"></script><script src="edge-speech.js"></script><script src="app.js"></script>
+  <script src="dexie.js?v=4.4.6-diag2" data-source-fingerprint="275222:d069eb69"></script><script src="learning.js?v=1"></script><script src="library.js?v=4"></script><script src="library-ui.js?v=4"></script>
+  <script src="speech.js?v=4"></script><script src="edge-speech.js"></script><script src="package-ui.js?v=1"></script><script src="app.js?v=4"></script>
 </body>
 </html>

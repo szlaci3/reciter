@@ -1,6 +1,6 @@
 /* Keep document storage and editing separate from the speech player. */
 (function (root) {
-  root.mountLibrary = async function ({ initialText, onTextChanged, onSwitch }) {
+  root.mountLibrary = async function ({ initialText, onTextChanged, onSwitch, onDocumentPlay = () => {}, onUnlock = () => {} }) {
     const $ = id => document.getElementById(id);
     const title = $('document-title'), material = $('material'), status = $('save-status'), tags = $('document-tags');
     const search = $('library-search'), view = $('library-view'), sort = $('library-sort'), topic = $('library-tag');
@@ -81,9 +81,12 @@
         const topicTags = document.createElement('span'); topicTags.className = 'document-tags';
         topicTags.textContent = (doc.tags || []).join(' · '); topicTags.hidden = !topicTags.textContent;
         const selected = document.createElement('span'); selected.className = 'document-selection';
-        selected.textContent = doc.id === activeId ? 'Selected' : 'Open document';
+        selected.textContent = doc.id === activeId ? 'Selected · tap to play' : 'Tap to play';
         button.append(name, preview, topicTags, selected);
-        button.addEventListener('click', () => switchDocument(doc.id));
+        button.addEventListener('click', async () => {
+          onUnlock();
+          if (await switchDocument(doc.id)) onDocumentPlay(doc.id);
+        });
         return button;
       });
       $('document-list').replaceChildren(...cards);
@@ -93,6 +96,7 @@
     try {
       const missing = [];
       if (typeof root.Dexie !== 'function') missing.push('dexie.js');
+      if (!root.ReciterLearning) missing.push('learning.js');
       if (!root.ReciterLibrary) missing.push('library.js');
       if (missing.length) {
         const details = await Promise.all(missing.map(async name => {
@@ -145,11 +149,13 @@
       render(editor);
     }
     async function switchDocument(id) {
-      if (editor.busy || transferBusy || (id && id === editor.active?.id)) return;
+      if (editor.busy || transferBusy) return false;
+      if (id && id === editor.active?.id) return true;
       onSwitch();
       const switched = await editor.navigate(id);
       failedNavigation = switched ? null : { id }; failedAction = null;
       if (switched && !id) { showLibrary(); title.focus(); title.select(); }
+      return switched;
     }
     async function organize(action) {
       if (editor.busy || transferBusy || !editor.active) return;
@@ -278,5 +284,6 @@
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden' && editor.dirty) editor.flush();
     });
+    return editor;
   };
 })(globalThis);

@@ -1,5 +1,6 @@
 /* Browser-local documents. No service credentials or audio are stored here. */
 (function (root) {
+  const learning = root.ReciterLearning || (typeof require !== 'undefined' ? require('./learning.js') : null);
   const COLORS = ['#31576e', '#653c60', '#715027', '#285941', '#663d39', '#444f7b',
     '#285a60', '#654674', '#595323', '#71404f', '#3b5862', '#485b35'];
   function titleFor(text) {
@@ -44,7 +45,7 @@
     const invalid = message => { throw new Error('Invalid backup: ' + message); };
     const record = item => item && typeof item === 'object' && !Array.isArray(item);
     const timestamp = item => Number.isSafeInteger(item) && item >= 0 && item <= 8640000000000000;
-    if (!record(value) || value.format !== 'reciter-library' || value.version !== 1 || value.schemaVersion !== 2) {
+    if (!record(value) || value.format !== 'reciter-library' || value.version !== 1 || ![2, 3].includes(value.schemaVersion)) {
       invalid('expected a Reciter library backup (format version 1, schema version 2).');
     }
     if (!timestamp(value.exportedAt) || !Array.isArray(value.documents) || value.documents.length > MAX_BACKUP_DOCUMENTS) {
@@ -70,13 +71,15 @@
       // Copy only known document fields. Imported objects never become configuration.
       return { id: doc.id, title: doc.title, text: doc.text, color: doc.color,
         createdAt: doc.createdAt, updatedAt: doc.updatedAt, revision: doc.revision,
-        tags: [...doc.tags], trashedAt: doc.trashedAt };
+        tags: [...doc.tags], trashedAt: doc.trashedAt,
+        ...(doc.learning ? { learning: learning.managed(doc.learning) } : {}) };
     });
     if (!(value.selectedId === null || (typeof value.selectedId === 'string' && ids.has(value.selectedId)))) {
       invalid('selected document does not exist.');
     }
-    const backup = { format: 'reciter-library', version: 1, schemaVersion: 2,
-      exportedAt: value.exportedAt, selectedId: value.selectedId, documents };
+    const backup = { format: 'reciter-library', version: 1, schemaVersion: value.schemaVersion,
+      exportedAt: value.exportedAt, selectedId: value.selectedId, documents,
+      ...(value.schemaVersion === 3 ? learning.backupExtras(value, documents) : {}) };
     if (new root.Blob([JSON.stringify(backup)]).size > MAX_BACKUP_BYTES) invalid('maximum file size is 25 MiB.');
     return backup;
   }
@@ -89,7 +92,7 @@
   }
   function sameDocument(a, b) {
     return ['title', 'text', 'color', 'createdAt', 'updatedAt', 'trashedAt'].every(key => a[key] === b[key])
-      && JSON.stringify(a.tags) === JSON.stringify(b.tags);
+      && JSON.stringify(a.tags) === JSON.stringify(b.tags) && JSON.stringify(a.learning) === JSON.stringify(b.learning);
   }
   function libraryToken(documents, generation) {
     return JSON.stringify([generation, documents.map(doc => [doc.id, doc.revision]).sort((a, b) => a[0].localeCompare(b[0]))]);
@@ -103,6 +106,7 @@
         .upgrade(tx => tx.table('documents').toCollection().modify(doc => {
           doc.tags = doc.tags || []; doc.trashedAt = doc.trashedAt || null;
         }));
+      this.db.version(3).stores({ documents: '&id,createdAt,updatedAt', meta: '&key', packages: '&id,date', progress: '&occurrenceId,topicId' });
     }
     makeDocument(text, documents, title = titleFor(text)) {
       const now = Date.now();
@@ -163,17 +167,18 @@
       });
     }
     async exportBackup() {
-      return this.db.transaction('r', this.db.documents, this.db.meta, async () => {
+      return this.db.transaction('r', this.db.documents, this.db.meta, this.db.packages, this.db.progress, async () => {
         await this.assertGeneration();
         const documents = await this.list(), selected = (await this.db.meta.get('selected'))?.value;
-        return validateBackup({ format: 'reciter-library', version: 1, schemaVersion: 2,
-          exportedAt: Date.now(), selectedId: documents.some(doc => doc.id === selected) ? selected : null, documents });
+        return validateBackup({ format: 'reciter-library', version: 1, schemaVersion: 3,
+          exportedAt: Date.now(), selectedId: documents.some(doc => doc.id === selected) ? selected : null, documents,
+          packages: await this.db.packages.toArray(), progress: await this.db.progress.toArray() });
       });
     }
     async prepareImport(value, mode) {
       if (!['replace', 'add'].includes(mode)) throw new Error('Choose Import database or Add to database.');
       const backup = validateBackup(value);
-      return this.db.transaction('r', this.db.documents, this.db.meta, async () => {
+      return this.db.transaction('r', this.db.documents, this.db.meta, this.db.packages, this.db.progress, async () => {
         await this.assertGeneration();
         const documents = await this.list(), byId = new Map(documents.map(doc => [doc.id, doc]));
         const conflicts = [], identical = [], added = [];
@@ -184,6 +189,7 @@
           else conflicts.push({ id: doc.id, title: doc.title, currentTitle: current.title });
         }
         return { mode, backup, backupToken: JSON.stringify(backup), token: libraryToken(documents, this.generation),
+          learningToken: JSON.stringify([await this.db.packages.toArray(), await this.db.progress.toArray()]),
           currentCount: documents.length, currentTrash: documents.filter(doc => doc.trashedAt).length,
           incomingTrash: backup.documents.filter(doc => doc.trashedAt).length,
           added, identical, conflicts };
@@ -193,42 +199,68 @@
       if (!['replace', 'add'].includes(plan.mode) || !['both', 'keep'].includes(policy)) throw new Error('Invalid import choice.');
       const backup = validateBackup(plan.backup);
       if (JSON.stringify(backup) !== plan.backupToken) throw new Error('The backup changed. Select the file and review it again.');
-      const result = await this.db.transaction('rw', this.db.documents, this.db.meta, async () => {
+      const result = await this.db.transaction('rw', this.db.documents, this.db.meta, this.db.packages, this.db.progress, async () => {
         await this.assertGeneration();
         const current = await this.list();
         if (libraryToken(current, this.generation) !== plan.token) throw new Error('The library changed since this review. Select the file and review it again.');
+        if (JSON.stringify([await this.db.packages.toArray(), await this.db.progress.toArray()]) !== plan.learningToken) throw new Error('Listening data changed since this review. Review the file again.');
         const byId = new Map(current.map(doc => [doc.id, doc]));
         const generation = plan.mode === 'replace' ? newId() : this.generation;
         let documents, added = 0, skipped = 0, copies = 0;
+        const remap = new Map(), ignored = new Set();
         if (plan.mode === 'replace') {
           documents = backup.documents.map(doc => ({ ...doc,
             revision: Math.max(doc.revision, byId.get(doc.id)?.revision || 0) + 1 }));
           await this.db.documents.clear();
           await this.db.documents.bulkAdd(documents);
+          await this.db.packages.clear(); await this.db.progress.clear();
           await this.db.meta.put({ key: 'generation', value: generation });
         } else {
           documents = [...current];
           const reserved = new Set([...byId.keys(), ...backup.documents.map(doc => doc.id)]);
           for (const source of backup.documents) {
             const existing = byId.get(source.id);
-            if (existing && (sameDocument(existing, source) || policy === 'keep')) { skipped++; continue; }
+            if (existing && (sameDocument(existing, source) || policy === 'keep')) { skipped++; if (!sameDocument(existing, source)) ignored.add(source.id); continue; }
             const doc = { ...source, tags: [...source.tags] };
             if (existing) {
               do { doc.id = newId(); } while (reserved.has(doc.id));
               doc.title = (doc.title.trim() || 'Untitled document') + ' (imported copy)';
               doc.color = colorFor(documents, existing.color); doc.revision = 1;
+              remap.set(source.id, doc.id);
+              // Imported copies are independent ordinary documents.
+              delete doc.learning;
               copies++;
             }
             reserved.add(doc.id); documents.push(doc);
             await this.db.documents.add(doc); added++;
           }
         }
+        const occurrenceMap = new Map();
+        for (const p of backup.progress || []) {
+          if (ignored.has(p.topicId)) continue;
+          const copy = { ...p, topicId: remap.get(p.topicId) || p.topicId };
+          const existing = await this.db.progress.get(p.occurrenceId);
+          if (remap.has(p.topicId) || (existing && JSON.stringify(existing) !== JSON.stringify(copy))) {
+            copy.occurrenceId = newId(); copy.eventId = newId();
+          }
+          occurrenceMap.set(p.occurrenceId, copy.occurrenceId);
+          if (!existing || copy.occurrenceId !== p.occurrenceId || plan.mode === 'replace') await this.db.progress.put(copy);
+        }
+        for (const pack of backup.packages || []) {
+          const copy = { ...pack, entries: pack.entries.filter(e => !ignored.has(e.topicId)).map(e => ({ ...e,
+            topicId: remap.get(e.topicId) || e.topicId, occurrenceId: occurrenceMap.get(e.occurrenceId) || e.occurrenceId })) };
+          const existing = await this.db.packages.get(copy.id);
+          if (existing && JSON.stringify(existing) === JSON.stringify(copy)) continue;
+          if (existing) copy.id = newId();
+          await this.db.packages.put(copy);
+        }
         const previousSelected = preferredId || (await this.db.meta.get('selected'))?.value;
         const wanted = plan.mode === 'replace' ? backup.selectedId : previousSelected;
         const selectedId = documents.some(doc => doc.id === wanted) ? wanted
           : documents.find(doc => !doc.trashedAt)?.id || null;
         // An additive result must remain exportable under the same limits.
-        validateBackup({ ...backup, documents, selectedId });
+        validateBackup({ ...backup, schemaVersion: 3, documents, selectedId,
+          packages: await this.db.packages.toArray(), progress: await this.db.progress.toArray() });
         await this.db.meta.put({ key: 'selected', value: selectedId });
         await this.db.meta.put({ key: 'initial-document-v1', value: true });
         return { documents, selectedId, generation, added, skipped, copies };
@@ -239,7 +271,7 @@
     }
     async organize(action, draft) {
       if (!['duplicate', 'trash', 'restore', 'delete'].includes(action)) throw new Error('Unknown document action.');
-      return this.db.transaction('rw', this.db.documents, this.db.meta, async () => {
+      return this.db.transaction('rw', this.db.documents, this.db.meta, this.db.packages, this.db.progress, async () => {
         await this.assertGeneration();
         const current = await this.db.documents.get(draft.id);
         if (!current || current.revision !== draft.revision) throw conflict();
@@ -257,6 +289,8 @@
           selectedId = copy.id;
         } else if (action === 'delete') {
           await this.db.documents.delete(current.id);
+          await this.db.progress.where('topicId').equals(current.id).delete();
+          await this.db.packages.toCollection().modify(pack => { pack.entries = pack.entries.filter(e => e.topicId !== current.id); });
         } else {
           await this.db.documents.put({ ...current, trashedAt: action === 'trash' ? Date.now() : null,
             updatedAt: Date.now(), revision: current.revision + 1 });
@@ -271,6 +305,7 @@
     }
   }
   // Serialize saves and navigation. A failed save leaves the draft in memory.
+  learning?.install(LibraryStore, newId);
   class LibraryEditor {
     constructor(store, changed = () => {}) {
       this.store = store; this.changed = changed; this.documents = [];
@@ -367,7 +402,7 @@
       } finally { this.busy = false; this.emit(); }
     }
   }
-  const api = { COLORS, normalizeTags, visibleDocuments, MAX_BACKUP_BYTES, validateBackup, parseBackup, LibraryStore, LibraryEditor };
+  const api = { COLORS, normalizeTags, visibleDocuments, MAX_BACKUP_BYTES, validateBackup, parseBackup, LibraryStore, LibraryEditor, newId };
   if (typeof module !== 'undefined') module.exports = api;
   else root.ReciterLibrary = api;
 })(globalThis);

@@ -6,15 +6,15 @@ const { IDBFactory, IDBKeyRange } = require('fake-indexeddb');
 const source = name => readFileSync(require.resolve('./' + name), 'utf8');
 async function until(condition) {
   for (let i = 0; i < 200; i++) {
-    if (condition()) return;
+    if (await condition()) return;
     await new Promise(resolve => setTimeout(resolve, 5));
   }
   assert.fail('UI did not reach expected state');
 }
-async function page(t, { legacy = 'Legacy title.\n\nLegacy second passage.', beforeApp } = {}) {
+async function page(t, { legacy = 'Legacy title.\n\nLegacy second passage.', beforeApp, database } = {}) {
   const dom = new JSDOM(source('index.html'), { url: 'http://reciter.test', runScripts: 'outside-only', pretendToBeVisual: true });
   const w = dom.window, spoken = [];
-  const indexedDB = new IDBFactory();
+  const indexedDB = database || new IDBFactory();
   Object.assign(w, { indexedDB, IDBKeyRange, structuredClone, fetch: async () => { throw new Error('No PC configured'); } });
   let canceled = 0;
   w.speechSynthesis = { getVoices: () => [], addEventListener() {}, speak: u => spoken.push(u),
@@ -23,7 +23,7 @@ async function page(t, { legacy = 'Legacy title.\n\nLegacy second passage.', bef
   w.HTMLMediaElement.prototype.pause = function () {};
   w.HTMLMediaElement.prototype.play = async function () {};
   w.localStorage.setItem('reciter-listening-v1', JSON.stringify({ text: legacy, source: 'browser' }));
-  for (const name of ['dexie.js', 'library.js', 'library-ui.js', 'speech.js', 'edge-speech.js']) w.eval(source(name));
+  for (const name of ['dexie.js', 'learning.js', 'library.js', 'library-ui.js', 'speech.js', 'edge-speech.js', 'package-ui.js']) w.eval(source(name));
   const instances = [];
   const Store = w.ReciterLibrary.LibraryStore;
   w.ReciterLibrary.LibraryStore = class extends Store { constructor(...args) { super(...args); instances.push(this); } };
@@ -32,9 +32,11 @@ async function page(t, { legacy = 'Legacy title.\n\nLegacy second passage.', bef
   t.after(() => { instances.forEach(s => s.db.close()); w.close(); });
   const $ = id => w.document.getElementById(id);
   await until(() => /Saved on this device|Library could not start|Choose or create a document/.test($('save-status').textContent));
+  if (/Saved on this device/.test($('save-status').textContent) && $('material').value.trim()) await until(() => !$('play').disabled);
+  if (!/Library could not start/.test($('save-status').textContent)) await until(() => $('learning-section').dataset.ready === 'true');
   const edit = (id, text) => { $(id).value = text; $(id).dispatchEvent(new w.Event('input', { bubbles: true })); };
   const saved = () => until(() => $('save-status').textContent === 'Saved on this device');
-  return { w, $, edit, saved, spoken, store: instances[0], canceled: () => canceled };
+  return { w, $, edit, saved, spoken, store: instances[0], database: indexedDB, canceled: () => canceled };
 }
 
 test('Automatic Play speaks while connecting; Connect preserves playback and Phone only cancels the wake', async t => {
@@ -295,7 +297,8 @@ test('Trash is read-only, can restore identity, and permanent deletion requires 
   assert.equal(p.$('trash-note').hidden, false);
   assert.equal(p.$('document-title').readOnly, true); assert.equal(p.$('document-tags').readOnly, true);
   assert.equal(p.$('material').readOnly, true); assert.equal(p.$('material').value, first.text);
-  assert.equal(p.$('play').disabled, false);
+  await until(() => /^Speaking/.test(p.$('status').textContent));
+  assert.equal(p.$('play').disabled, true);
   p.$('restore-document').click(); await until(() => p.$('library-view').value === 'library');
   assert.equal(p.$('material').disabled, false);
   assert.equal(p.w.document.querySelector('[aria-pressed=true]').dataset.documentId, first.id);
@@ -365,6 +368,86 @@ async function readBlob(w, blob) {
     reader.onerror = reject; reader.readAsText(blob);
   });
 }
+
+async function loadPackage(p, data) {
+  p.$('import-package').click();
+  const file = new p.w.File([JSON.stringify(data)], 'learning.json', { type: 'application/json' });
+  Object.defineProperty(p.$('package-file'), 'files', { configurable: true, value: [file] });
+  p.$('package-file').dispatchEvent(new p.w.Event('change'));
+  await until(() => !p.$('package-review').hidden || p.$('package-status').dataset.state === 'error');
+}
+
+test('package import preview, topic tap, shared pause and automatic priority playback', async t => {
+  const p = await page(t), data = JSON.parse(source('fixtures/learning-package.json'));
+  const next = { ...data.topics[0], id: 'second', title: 'Next topic', text: 'Second document.' };
+  next.textHash = p.w.ReciterLearning.fingerprint(next.text); data.topics.push(next);
+  // Input order differs from priority order.
+  data.package.entries.unshift({ topicId: 'second', occurrenceId: 'second-listen', priority: 'Can' });
+  await loadPackage(p, data); assert.equal((await p.store.list()).length, 1);
+  p.$('apply-package').click();
+  await until(() => p.w.document.querySelectorAll('.package-topic').length === 2 && !p.$('import-package').disabled);
+  p.w.document.querySelector('[data-package-play]').click();
+  await until(() => p.spoken.length === 1);
+  assert.equal(p.spoken[0].text, data.topics[0].text);
+  await until(() => !p.w.document.querySelector('[data-package-play]').disabled);
+  p.w.document.querySelector('[data-package-play]').click();
+  await until(() => /Paused/.test(p.$('status').textContent));
+  p.$('play').click(); assert.equal(p.spoken.length, 1);
+  p.spoken[0].onend(); await until(() => p.spoken.length === 2);
+  assert.equal(p.spoken[1].text, 'Second document.');
+  p.spoken[1].onend(); await until(() => /Finished/.test(p.$('status').textContent));
+  await until(() => /Completed/.test(p.w.document.querySelector('[data-topic-id="second"]').textContent));
+  const progress = await p.store.exportProgress(); assert.equal(progress.events.filter(e => e.completedAt).length, 2);
+  let blob; p.w.URL.createObjectURL = value => { blob = value; return 'blob:progress'; }; p.w.URL.revokeObjectURL = () => {};
+  p.$('export-progress').click(); await until(() => !p.$('download-progress').hidden);
+  const exported = JSON.parse(await readBlob(p.w, blob));
+  assert.equal(exported.format, 'reciter-progress'); assert.equal(exported.events.length, 2);
+  assert.ok(!JSON.stringify(exported).includes('Second document.'));
+  await until(() => !p.w.document.querySelector('[data-topic-id="css-example"]').disabled);
+  p.w.document.querySelector('[data-topic-id="css-example"]').click();
+  await until(() => p.spoken.length === 3); assert.equal(p.spoken[2].text, data.topics[0].text);
+});
+
+test('package cancellation and malformed input leave stored library unchanged', async t => {
+  const p = await page(t), data = JSON.parse(source('fixtures/learning-package.json'));
+  await loadPackage(p, data); p.$('cancel-package').click();
+  assert.equal((await p.store.list()).length, 1);
+  data.topics[0].textHash = '00000000'; await loadPackage(p, data);
+  assert.equal(p.$('package-status').dataset.state, 'error'); assert.equal((await p.store.list()).length, 1);
+});
+
+test('partially heard package resumes a saved checkpoint without marking it complete', async t => {
+  const p = await page(t), data = JSON.parse(source('fixtures/learning-package.json'));
+  data.topics[0].text = 'This is a short sentence. '.repeat(25).trim();
+  data.topics[0].textHash = p.w.ReciterLearning.fingerprint(data.topics[0].text);
+  await loadPackage(p, data); p.$('apply-package').click();
+  await until(() => p.w.document.querySelector('.package-topic') && !p.$('import-package').disabled);
+  p.w.document.querySelector('.package-topic').click(); await until(() => p.spoken.length === 1);
+  const first = p.spoken[0].text; p.spoken[0].onend(); await until(() => p.spoken.length === 2);
+  p.$('stop').click();
+  await new Promise(resolve => setTimeout(resolve, 30));
+  let progress = await p.store.db.progress.get('listen-css-1'); assert.ok(progress.offset >= first.length); assert.equal(progress.completedAt, null);
+  p.w.document.querySelector('.package-topic').click(); await until(() => p.spoken.length === 3);
+  assert.equal(p.spoken[2].text, p.spoken[1].text);
+  const canceled = p.spoken[2]; p.$('stop').click(); canceled.onend();
+  await new Promise(resolve => setTimeout(resolve, 20)); assert.equal(p.spoken.length, 3);
+});
+
+test('reopening restores an unfinished package without autoplay and page Play resumes it', async t => {
+  const p = await page(t), data = JSON.parse(source('fixtures/learning-package.json'));
+  data.topics[0].text = 'An introduction to CSS. '.repeat(15) + 'A different ending. '.repeat(15);
+  data.topics[0].textHash = p.w.ReciterLearning.fingerprint(data.topics[0].text);
+  await loadPackage(p, data); p.$('apply-package').click();
+  await until(() => p.w.document.querySelector('.package-topic') && !p.$('import-package').disabled);
+  p.w.document.querySelector('.package-topic').click(); await until(() => p.spoken.length === 1);
+  p.spoken[0].onend(); await until(() => p.spoken.length === 2);
+  await until(async () => (await p.store.db.progress.get('listen-css-1')).offset > 0);
+  const expected = p.spoken[1].text; p.store.db.close(); p.w.close();
+  const reopened = await page(t, { database: p.database });
+  assert.equal(reopened.spoken.length, 0);
+  reopened.$('play').click(); await until(() => reopened.spoken.length === 1);
+  assert.equal(reopened.spoken[0].text, expected);
+});
 
 test('export offers a mobile download containing saved content and no PC credentials', async t => {
   const p = await page(t);

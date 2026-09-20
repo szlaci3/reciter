@@ -130,7 +130,7 @@ test('version-one upgrade preserves all documents, identity, selection and migra
   assert.equal(result.selectedId, 'two');
   assert.deepEqual(result.documents, docs.map(doc => ({ ...doc, tags: [], trashedAt: null })));
   assert.equal((await s.db.meta.get('initial-document-v1')).value, true);
-  assert.equal(s.db.verno, 2);
+  assert.equal(s.db.verno, 3);
 });
 
 test('tags autosave, normalize duplicates, and survive reopening without altering identity', async t => {
@@ -301,7 +301,7 @@ test('backup round-trip retains documents, Trash, identity, tags and selection, 
   const withoutRevision = doc => { const { revision, ...rest } = doc; return rest; };
   assert.deepEqual(exported.documents.map(withoutRevision), backup.documents.map(withoutRevision));
   assert.equal(exported.documents.filter(doc => doc.trashedAt).length, 1);
-  assert.deepEqual(Object.keys(exported).sort(), ['documents', 'exportedAt', 'format', 'schemaVersion', 'selectedId', 'version']);
+  assert.deepEqual(Object.keys(exported).sort(), ['documents', 'exportedAt', 'format', 'packages', 'progress', 'schemaVersion', 'selectedId', 'version']);
   const repeated = await target.prepareImport(backup, 'add');
   assert.equal(repeated.identical.length, 2); assert.equal(repeated.conflicts.length, 0);
 });

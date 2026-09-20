@@ -87,3 +87,19 @@ summary { cursor: pointer; }
 #import-review { border-top: 1px solid var(--border); margin-top: 16px; padding-top: 12px; overflow-wrap: anywhere; }
 #import-conflicts { max-height: 180px; overflow-y: auto; padding-left: 24px; }
 #backup-status[data-state=error] { color: #ffd093; }
+
+body { padding-bottom: 285px; }
+.player { position: fixed; z-index: 10; bottom: 0; left: 50%; transform: translateX(-50%); width: min(800px, 100%); margin: 0;
+  padding: 12px 18px calc(10px + env(safe-area-inset-bottom)); border-radius: 16px 16px 0 0; box-shadow: 0 -6px 24px #0006; max-height: 70vh; overflow-y: auto; }
+.player h2 { display: none; }
+.player #editing-document, .player #status { margin: 4px 0; font-size: .85rem; }
+.player .controls { margin: 8px 0; gap: 6px; }
+.player .controls button { padding: 8px 10px; }
+.player-details { margin: 4px 0; }
+.package-card { border-top: 1px solid var(--border); padding: 12px 0; }
+.package-heading { display: flex; gap: 8px; align-items: center; }
+.package-open { flex: 1; text-align: left; }
+.package-topic { display: block; width: 100%; text-align: left; margin: 8px 0; border-left: 5px solid var(--document-color, var(--accent)); }
+.package-topic[aria-current=true] { outline: 2px solid var(--accent); }
+#package-status[data-state=error] { color: #ffd093; }
+#source-links a { color: var(--accent); overflow-wrap: anywhere; }

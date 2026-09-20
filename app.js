@@ -14,7 +14,7 @@
   try { $('pc-key').value = sessionStorage.getItem('reciter-pc-key') || ''; } catch {}
   if (!EdgeSpeech.validAccessKey($('pc-key').value)) $('pc-key').value = '';
   let edgeVoice = saved.edgeVoice || 'en-GB-SoniaNeural';
-  let libraryLoading = true;
+  let libraryLoading = true, learningUI = null;
   function edgeConfig() { return { warmup: true, source: $('source').value, url: $('pc-url').value.trim().replace(/\/$/, ''), key: $('pc-key').value.trim(), edgeVoice }; }
   const engine = new EdgeSpeech(synth, edgeConfig, message => { $('connection').textContent = message; }, $('edge-audio'));
   const voiceId = v => `${v.voiceURI}|${v.name}|${v.lang}`;
@@ -36,6 +36,7 @@
   outputs();
   const player = new ReciterSpeech.Player(engine, text => window.SpeechSynthesisUtterance ? new SpeechSynthesisUtterance(text) : { text }, settings, render);
   function render(error) {
+    if (!document) return;
     const active = ['speaking', 'waiting'].includes(player.state);
     const position = player.items.length ? `Passage ${player.index + 1} of ${player.items.length}` : 'Add some text to begin';
     const labels = { idle: 'Ready', speaking: 'Speaking', waiting: 'Taking a breath', paused: 'Paused', ended: 'Finished', error: `Speech failed (${error || 'unknown'}). Try Play again or choose another voice` };
@@ -50,6 +51,7 @@
     $('passage').disabled = !player.items.length;
     $('passage').value = String(player.index);
     $('preview').textContent = player.items[player.index] || '';
+    learningUI?.sync();
   }
   function loadVoices() {
     voices = synth?.getVoices() || [];
@@ -64,6 +66,7 @@
       : 'Daniel is not currently exposed by this browser. You can audition another voice; the browser default may sound different from your preferred voice.';
   }
   function textChanged() {
+    learningUI?.textChanged();
     player.setText($('material').value);
     $('passage').replaceChildren(...player.items.map((text, i) => new Option(`${i + 1}. ${text.slice(0, 65)}${text.length > 65 ? '…' : ''}`, String(i))));
     render();
@@ -86,14 +89,14 @@
   }
   $('connect').addEventListener('click', connect);
   for (const id of ['pc-url', 'pc-key']) $(id).addEventListener('input', () => {
-    player.stop(); engine.readyKey = null; engine.failed = true; save();
+    learningUI?.cancel(); player.stop(); engine.readyKey = null; engine.failed = true; save();
   });
-  $('source').addEventListener('change', () => { player.stop(); engine.failed = false; save(); $('connection').textContent = 'Source changed. Press Play to listen.'; });
+  $('source').addEventListener('change', () => { learningUI?.cancel(); player.stop(); engine.failed = false; save(); $('connection').textContent = 'Source changed. Press Play to listen.'; });
   $('edge-voice').addEventListener('change', () => { edgeVoice = $('edge-voice').value; save(); });
   $('voice').addEventListener('change', () => { preferred = $('voice').value; save(); $('voice-note').textContent = 'Your selected voice will be used for the next spoken segment.'; });
   for (const key of ['pitch', 'rate', 'gap']) $(key).addEventListener('input', () => { outputs(); save(); });
   function play() {
-    if (libraryLoading) return;
+    if (!document || libraryLoading) return;
     if (['speaking', 'waiting'].includes(player.state)) return;
     if (player.state !== 'paused') {
       loadVoices();
@@ -108,7 +111,7 @@
     }
   }
   $('pause').addEventListener('click', () => player.pause());
-  $('stop').addEventListener('click', () => player.stop());
+  $('stop').addEventListener('click', () => { learningUI?.cancel(); player.stop(); });
   $('previous').addEventListener('click', () => player.select(player.index - 1));
   $('next').addEventListener('click', () => player.select(player.index + 1));
   $('passage').addEventListener('change', () => player.select(Number($('passage').value)));
@@ -120,9 +123,20 @@
   document.addEventListener('visibilitychange', reconcilePlayback);
   window.addEventListener('focus', reconcilePlayback);
   window.addEventListener('pageshow', reconcilePlayback);
-  window.addEventListener('pagehide', () => player.stop());
+  window.addEventListener('pagehide', () => { learningUI?.cancel(); player.stop(); });
   loadVoices(); textChanged();
-  mountLibrary({ initialText: $('material').value, onTextChanged: textChanged, onSwitch: () => player.stop() })
+  mountLibrary({ initialText: $('material').value, onTextChanged: textChanged, onSwitch: () => { learningUI?.cancel(); player.stop(); },
+    onUnlock: () => { learningUI?.cancel(); player.stop(); if ($('source').value === 'auto') engine.unlock(); },
+    onDocumentPlay: async id => {
+      try { if (!learningUI || !await learningUI.playTopic(id)) play(); }
+      catch (error) { if (document) $('package-status').textContent = error.message; }
+    } })
+    .then(async editor => {
+      libraryLoading = false; render();
+      if (editor && window.ReciterPackages) learningUI = await ReciterPackages.mount({ editor, player, play,
+        unlock: () => { if ($('source').value === 'auto') engine.unlock(); } });
+    })
+    .catch(error => { if (document) $('package-status').textContent = 'Packages could not start: ' + error.message; })
     .finally(() => { libraryLoading = false; render(); });
   if ($('source').value === 'auto' && $('pc-url').value && $('pc-key').value) connect();
 })();

@@ -17,6 +17,30 @@ test('passages handle blank lines and long segments preserve words', () => {
   assert.ok(chunks.every(s => s.length <= 220));
   assert.equal(chunks.join(' '), text);
 });
+
+test('saved text offsets resume across different segmentation without skipping text', () => {
+  const a = fixture(); const text = 'Remember this sentence. '.repeat(35).trim();
+  let checkpoint; a.player.onCheckpoint = p => { checkpoint = p; };
+  a.player.setText(text); a.player.play(); a.spoken[0].onend();
+  assert.ok(checkpoint.offset > 0);
+  const b = fixture(); b.player.synth.segmentText = edgeSegments;
+  b.player.setText(text); b.player.restoreCheckpoint(checkpoint);
+  assert.equal(b.spoken.length, 0); b.player.play();
+  assert.ok(text.slice(checkpoint.offset).startsWith(b.spoken[0].text));
+});
+
+test('skipping a passage cannot report complete listening', () => {
+  const { player, spoken } = fixture(); const checkpoints = [];
+  player.onCheckpoint = p => checkpoints.push(p);
+  player.setText('First paragraph.\n\nSecond paragraph.'); player.select(1); player.play(); spoken[0].onend();
+  assert.equal(player.state, 'ended'); assert.equal(checkpoints.at(-1).completed, false);
+});
+
+test('checkpoint at a paragraph boundary resumes the next paragraph', () => {
+  const { player, spoken } = fixture(); player.setText('First.\n\nSecond.');
+  player.restoreCheckpoint({ offset: 6, heardThrough: 6 }); player.play();
+  assert.equal(spoken[0].text, 'Second.');
+});
 test('preferred settings apply to every segment and passages have a break', () => {
   const { player, spoken, pending } = fixture();
   player.setText('First.\n\nSecond.'); player.play();

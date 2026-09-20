@@ -1,0 +1,12 @@
+{
+  "format": "reciter-package",
+  "version": 1,
+  "package": {
+    "id": "day-2026-09-21",
+    "date": "2026-09-21",
+    "revision": 1,
+    "entries": [{"topicId": "css-example", "occurrenceId": "listen-css-1", "priority": "Must"}]
+  },
+  "topics": [{"id": "css-example", "title": "CSS example", "text": "A small CSS example.", "revision": 1,
+    "textHash": "5de23be4", "contentLengthPct": 100, "sources": ["https://developer.mozilla.org/en-US/docs/Web/CSS"], "trashedAt": null}]
+}

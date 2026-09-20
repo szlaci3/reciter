@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "test": "node --test speech.test.js edge-speech.test.js library.test.js library-ui.test.js",
+    "test": "node --test speech.test.js edge-speech.test.js library.test.js library-ui.test.js learning.test.js",
     "vendor": "node vendor.cjs"
   },
   "dependencies": {
