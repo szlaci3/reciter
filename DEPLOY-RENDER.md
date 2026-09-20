@@ -12,6 +12,12 @@ The frontend refuses to send a cloud key over plain HTTP, even when the frontend
 
 The user deployed this configuration successfully at `https://reciter.onrender.com` and verified it from the Netlify frontend on mobile. The service's `/healthz`, authentication, CORS, voice loading and Edge speech path worked. A cold/waking service begins with Daniel and transitions to Sonia; this is expected. Local checks still cover the configured Python runtime and application behavior, not every Render control-plane detail.
 
+## Deployment ownership
+
+The canonical frontend is `https://reciter-fe.netlify.app`. Netlify automatically deploys the frontend after each Git push. The Python backend on Render requires a manual deployment. The Render Python process also serves a copy of the frontend at `https://reciter.onrender.com`; that copy can remain stale after a frontend Git push until the backend is manually redeployed. This is acceptable and expected. Use the Netlify address for normal listening and library data, and treat the Render root page as a secondary convenience/debug copy.
+
+Keep the public Reciter repository available to the Netlify integration. Do not put private skills, secrets or private working notes in it. A skill moved to `Prepare-reciter` is private only if that repository itself is private; repository location alone does not change visibility. For genuinely private skills, use a private repository or a local/user skill directory outside either public deployment source.
+
 ## Billing and usage monitoring
 
 The account requires **Billing Information** for this service, and the user must monitor it. The user reports an extra bandwidth charge of **$0.15 per 1 GB** beyond the included allowance. Usage metrics may be delayed by up to **two hours**, so the dashboard is not a real-time spending alarm. Review the account billing page and service usage regularly, especially after testing or extended listening.
