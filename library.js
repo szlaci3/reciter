@@ -38,9 +38,66 @@
     const error = new Error('This document changed in another tab. Copy your edits before reloading.');
     error.name = 'ConflictError'; return error;
   }
+  const MAX_BACKUP_BYTES = 25 * 1024 * 1024;
+  const MAX_BACKUP_DOCUMENTS = 10000;
+  function validateBackup(value) {
+    const invalid = message => { throw new Error('Invalid backup: ' + message); };
+    const record = item => item && typeof item === 'object' && !Array.isArray(item);
+    const timestamp = item => Number.isSafeInteger(item) && item >= 0 && item <= 8640000000000000;
+    if (!record(value) || value.format !== 'reciter-library' || value.version !== 1 || value.schemaVersion !== 2) {
+      invalid('expected a Reciter library backup (format version 1, schema version 2).');
+    }
+    if (!timestamp(value.exportedAt) || !Array.isArray(value.documents) || value.documents.length > MAX_BACKUP_DOCUMENTS) {
+      invalid('invalid export date or document list (maximum 10,000 documents).');
+    }
+    const ids = new Set();
+    const documents = value.documents.map((doc, index) => {
+      const label = 'document ' + (index + 1);
+      if (!record(doc) || typeof doc.id !== 'string' || !doc.id.trim() || ids.has(doc.id)) invalid(label + ' has a missing or repeated ID.');
+      ids.add(doc.id);
+      if (typeof doc.title !== 'string' || typeof doc.text !== 'string') invalid(label + ' needs title and text strings.');
+      if (typeof doc.color !== 'string' || !/^#[0-9a-f]{6}$/i.test(doc.color)) invalid(label + ' has an invalid color.');
+      const channels = doc.color.slice(1).match(/../g).map(hex => parseInt(hex, 16) / 255)
+        .map(v => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4);
+      if (1.05 / (.2126 * channels[0] + .7152 * channels[1] + .0722 * channels[2] + .05) < 4.5) invalid(label + ' needs a dark color readable with white text.');
+      if (!timestamp(doc.createdAt) || !timestamp(doc.updatedAt)
+        || !(doc.trashedAt === null || (timestamp(doc.trashedAt) && doc.trashedAt > 0))
+        || !Number.isSafeInteger(doc.revision) || doc.revision < 1 || doc.revision >= Number.MAX_SAFE_INTEGER - 1) {
+        invalid(label + ' has invalid dates, Trash state or revision.');
+      }
+      if (!Array.isArray(doc.tags) || doc.tags.some(tag => typeof tag !== 'string' || !tag.trim())
+        || normalizeTags(doc.tags).length !== doc.tags.length) invalid(label + ' has invalid or repeated topic tags.');
+      // Copy only known document fields. Imported objects never become configuration.
+      return { id: doc.id, title: doc.title, text: doc.text, color: doc.color,
+        createdAt: doc.createdAt, updatedAt: doc.updatedAt, revision: doc.revision,
+        tags: [...doc.tags], trashedAt: doc.trashedAt };
+    });
+    if (!(value.selectedId === null || (typeof value.selectedId === 'string' && ids.has(value.selectedId)))) {
+      invalid('selected document does not exist.');
+    }
+    const backup = { format: 'reciter-library', version: 1, schemaVersion: 2,
+      exportedAt: value.exportedAt, selectedId: value.selectedId, documents };
+    if (new root.Blob([JSON.stringify(backup)]).size > MAX_BACKUP_BYTES) invalid('maximum file size is 25 MiB.');
+    return backup;
+  }
+  function parseBackup(text) {
+    if (typeof text !== 'string' || new root.Blob([text]).size > MAX_BACKUP_BYTES) throw new Error('Backup files must be at most 25 MiB.');
+    let value;
+    try { value = JSON.parse(text.replace(/^\uFEFF/, '')); }
+    catch (_) { throw new Error('Invalid backup: the file is not valid JSON.'); }
+    return validateBackup(value);
+  }
+  function sameDocument(a, b) {
+    return ['title', 'text', 'color', 'createdAt', 'updatedAt', 'trashedAt'].every(key => a[key] === b[key])
+      && JSON.stringify(a.tags) === JSON.stringify(b.tags);
+  }
+  function libraryToken(documents, generation) {
+    return JSON.stringify([generation, documents.map(doc => [doc.id, doc.revision]).sort((a, b) => a[0].localeCompare(b[0]))]);
+  }
   class LibraryStore {
     constructor(Dexie, name = 'reciter-library', options) {
       this.db = new Dexie(name, options);
+      this.generation = null;
       this.db.version(1).stores({ documents: '&id,createdAt,updatedAt', meta: '&key' });
       this.db.version(2).stores({ documents: '&id,createdAt,updatedAt', meta: '&key' })
         .upgrade(tx => tx.table('documents').toCollection().modify(doc => {
@@ -62,14 +119,23 @@
         }
         await this.db.meta.put({ key: 'initial-document-v1', value: true });
       });
+      this.generation = (await this.db.meta.get('generation'))?.value || null;
       const documents = await this.list();
       const selected = await this.db.meta.get('selected');
       return { documents, selectedId: documents.some(doc => doc.id === selected?.value)
         ? selected.value : documents.find(doc => !doc.trashedAt)?.id };
     }
+    async assertGeneration() {
+      if (((await this.db.meta.get('generation'))?.value || null) !== this.generation) {
+        const error = conflict();
+        error.message = 'The library was replaced in another tab. Copy your edits before reloading.';
+        throw error;
+      }
+    }
     list() { return this.db.documents.orderBy('createdAt').toArray(); }
     async select(id) {
       return this.db.transaction('rw', this.db.documents, this.db.meta, async () => {
+        await this.assertGeneration();
         const doc = await this.db.documents.get(id);
         if (!doc) throw new Error('This document is no longer available. Reload the library.');
         await this.db.meta.put({ key: 'selected', value: id });
@@ -78,6 +144,7 @@
     }
     async create() {
       return this.db.transaction('rw', this.db.documents, this.db.meta, async () => {
+        await this.assertGeneration();
         const doc = this.makeDocument('', await this.list());
         await this.db.documents.add(doc);
         await this.db.meta.put({ key: 'selected', value: doc.id });
@@ -85,7 +152,8 @@
       });
     }
     async save(draft) {
-      return this.db.transaction('rw', this.db.documents, async () => {
+      return this.db.transaction('rw', this.db.documents, this.db.meta, async () => {
+        await this.assertGeneration();
         const current = await this.db.documents.get(draft.id);
         if (!current || current.trashedAt || current.revision !== draft.revision) throw conflict();
         const doc = { ...current, title: draft.title, text: draft.text, tags: normalizeTags(draft.tags ?? current.tags),
@@ -94,9 +162,85 @@
         return doc;
       });
     }
+    async exportBackup() {
+      return this.db.transaction('r', this.db.documents, this.db.meta, async () => {
+        await this.assertGeneration();
+        const documents = await this.list(), selected = (await this.db.meta.get('selected'))?.value;
+        return validateBackup({ format: 'reciter-library', version: 1, schemaVersion: 2,
+          exportedAt: Date.now(), selectedId: documents.some(doc => doc.id === selected) ? selected : null, documents });
+      });
+    }
+    async prepareImport(value, mode) {
+      if (!['replace', 'add'].includes(mode)) throw new Error('Choose Import database or Add to database.');
+      const backup = validateBackup(value);
+      return this.db.transaction('r', this.db.documents, this.db.meta, async () => {
+        await this.assertGeneration();
+        const documents = await this.list(), byId = new Map(documents.map(doc => [doc.id, doc]));
+        const conflicts = [], identical = [], added = [];
+        for (const doc of backup.documents) {
+          const current = byId.get(doc.id);
+          if (!current) added.push(doc.id);
+          else if (sameDocument(current, doc)) identical.push(doc.id);
+          else conflicts.push({ id: doc.id, title: doc.title, currentTitle: current.title });
+        }
+        return { mode, backup, backupToken: JSON.stringify(backup), token: libraryToken(documents, this.generation),
+          currentCount: documents.length, currentTrash: documents.filter(doc => doc.trashedAt).length,
+          incomingTrash: backup.documents.filter(doc => doc.trashedAt).length,
+          added, identical, conflicts };
+      });
+    }
+    async applyImport(plan, policy = 'both', preferredId = null) {
+      if (!['replace', 'add'].includes(plan.mode) || !['both', 'keep'].includes(policy)) throw new Error('Invalid import choice.');
+      const backup = validateBackup(plan.backup);
+      if (JSON.stringify(backup) !== plan.backupToken) throw new Error('The backup changed. Select the file and review it again.');
+      const result = await this.db.transaction('rw', this.db.documents, this.db.meta, async () => {
+        await this.assertGeneration();
+        const current = await this.list();
+        if (libraryToken(current, this.generation) !== plan.token) throw new Error('The library changed since this review. Select the file and review it again.');
+        const byId = new Map(current.map(doc => [doc.id, doc]));
+        const generation = plan.mode === 'replace' ? newId() : this.generation;
+        let documents, added = 0, skipped = 0, copies = 0;
+        if (plan.mode === 'replace') {
+          documents = backup.documents.map(doc => ({ ...doc,
+            revision: Math.max(doc.revision, byId.get(doc.id)?.revision || 0) + 1 }));
+          await this.db.documents.clear();
+          await this.db.documents.bulkAdd(documents);
+          await this.db.meta.put({ key: 'generation', value: generation });
+        } else {
+          documents = [...current];
+          const reserved = new Set([...byId.keys(), ...backup.documents.map(doc => doc.id)]);
+          for (const source of backup.documents) {
+            const existing = byId.get(source.id);
+            if (existing && (sameDocument(existing, source) || policy === 'keep')) { skipped++; continue; }
+            const doc = { ...source, tags: [...source.tags] };
+            if (existing) {
+              do { doc.id = newId(); } while (reserved.has(doc.id));
+              doc.title = (doc.title.trim() || 'Untitled document') + ' (imported copy)';
+              doc.color = colorFor(documents, existing.color); doc.revision = 1;
+              copies++;
+            }
+            reserved.add(doc.id); documents.push(doc);
+            await this.db.documents.add(doc); added++;
+          }
+        }
+        const previousSelected = preferredId || (await this.db.meta.get('selected'))?.value;
+        const wanted = plan.mode === 'replace' ? backup.selectedId : previousSelected;
+        const selectedId = documents.some(doc => doc.id === wanted) ? wanted
+          : documents.find(doc => !doc.trashedAt)?.id || null;
+        // An additive result must remain exportable under the same limits.
+        validateBackup({ ...backup, documents, selectedId });
+        await this.db.meta.put({ key: 'selected', value: selectedId });
+        await this.db.meta.put({ key: 'initial-document-v1', value: true });
+        return { documents, selectedId, generation, added, skipped, copies };
+      });
+      // Updating only after commit keeps failed replacement transactions retryable.
+      this.generation = result.generation;
+      return result;
+    }
     async organize(action, draft) {
       if (!['duplicate', 'trash', 'restore', 'delete'].includes(action)) throw new Error('Unknown document action.');
       return this.db.transaction('rw', this.db.documents, this.db.meta, async () => {
+        await this.assertGeneration();
         const current = await this.db.documents.get(draft.id);
         if (!current || current.revision !== draft.revision) throw conflict();
         const trashed = Boolean(current.trashedAt);
@@ -131,7 +275,7 @@
     constructor(store, changed = () => {}) {
       this.store = store; this.changed = changed; this.documents = [];
       this.active = null; this.editVersion = 0; this.savedVersion = 0;
-      this.busy = false; this.saving = null; this.state = 'loading';
+      this.busy = false; this.saving = null; this.state = 'loading'; this.loadVersion = 0;
     }
     emit() { this.changed(this); }
     get dirty() { return this.editVersion !== this.savedVersion; }
@@ -170,6 +314,27 @@
       })();
       return this.saving;
     }
+    async transfer(work) {
+      if (this.busy) throw new Error('Wait for the current library action to finish.');
+      this.busy = true; this.emit();
+      try {
+        if (!await this.flush()) throw this.error || new Error('Save your edits before transferring the library.');
+        return await work();
+      } finally { this.busy = false; this.emit(); }
+    }
+    exportBackup() { return this.transfer(() => this.store.exportBackup()); }
+    prepareImport(backup, mode) { return this.transfer(() => this.store.prepareImport(backup, mode)); }
+    applyImport(plan, policy) {
+      return this.transfer(async () => {
+        const result = await this.store.applyImport(plan, policy, this.active?.id);
+        this.documents = result.documents;
+        const active = this.documents.find(doc => doc.id === result.selectedId);
+        this.active = active ? { ...active } : null;
+        this.editVersion = this.savedVersion = 0; this.loadVersion++;
+        this.state = 'saved'; this.error = null;
+        return result;
+      });
+    }
     async organize(action) {
       if (this.busy || !this.active) return false;
       this.busy = true; this.emit();
@@ -202,7 +367,7 @@
       } finally { this.busy = false; this.emit(); }
     }
   }
-  const api = { COLORS, normalizeTags, visibleDocuments, LibraryStore, LibraryEditor };
+  const api = { COLORS, normalizeTags, visibleDocuments, MAX_BACKUP_BYTES, validateBackup, parseBackup, LibraryStore, LibraryEditor };
   if (typeof module !== 'undefined') module.exports = api;
   else root.ReciterLibrary = api;
 })(globalThis);

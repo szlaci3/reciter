@@ -82,3 +82,8 @@ summary { cursor: pointer; }
 @media (max-width: 480px) {
   .library-tools label:first-child { grid-column: 1 / -1; }
 }
+
+.backup-download { display: inline-block; padding: 12px 16px; color: var(--accent); border: 1px solid var(--border); border-radius: 10px; }
+#import-review { border-top: 1px solid var(--border); margin-top: 16px; padding-top: 12px; overflow-wrap: anywhere; }
+#import-conflicts { max-height: 180px; overflow-y: auto; padding-left: 24px; }
+#backup-status[data-state=error] { color: #ffd093; }

@@ -29,9 +29,9 @@ python -m venv .venv
 
 Documents persist in IndexedDB; address, source, voice selection, and playback preferences remain in local storage. The access key survives reloads in the same tab through session storage; you may need to enter it again in a new session.
 
-## Content library — organization and Trash
+## Content library
 
-**Reload the same phone page for the organization controls.** The storage upgrade preserves existing documents. The PC server must already include the buffered static-response fix described below. No Node/npm installation is needed to run the Windows speech service or use the library.
+**Reload the same phone page for the library and backup controls.** The storage upgrade preserves existing documents. The PC server must already include the buffered static-response fix described below. No Node/npm installation is needed to run the Windows speech service or use the library.
 
 Choose a colored document card to open its title and text in the editor and load it into the existing player. **New document** creates an empty document ready for editing. Titles, text and topic tags save automatically; wait for **Saved on this device** before closing the page. Editing text or changing documents stops playback and resets the passage. Renaming, tagging, searching and sorting preserve the current playback position. The last selected document opens again on reload; playback position is not saved across reloads.
 
@@ -41,11 +41,25 @@ Enter comma-separated **Topic tags** in the editor. Empty and repeated tags are 
 
 **Move to Trash** retains the document and its color. Choose **Show → Trash** and open a card to view/listen to its read-only contents, **Restore** it, or **Delete permanently**. Permanent deletion is available only in Trash and asks for confirmation naming the document. Trash is never automatically emptied. Restore retains the original ID, creation date, content, tags and color. Trashing or deleting the selected document opens another active document if available; otherwise the editor and player are empty until you choose or create one. Emptying the library does not reimport the old pasted text.
 
-Database version 2 adds tags and Trash metadata to existing records without replacing their IDs, text, colors, timestamps or revisions. Saves, duplicates, Trash/restore and deletion use revision checks and transactions so stale tabs cannot silently overwrite or delete newer changes. Failed actions retain the document and can be retried; retrying permanent deletion asks for confirmation again. Export/import remains round three.
+Database version 2 adds tags and Trash metadata to existing records without replacing their IDs, text, colors, timestamps or revisions. Saves, duplicates, Trash/restore and deletion use revision checks and transactions so stale tabs cannot silently overwrite or delete newer changes. Failed actions retain the document and can be retried; retrying permanent deletion asks for confirmation again. Backup and transfer are available below the library cards.
 
 The previous saved text becomes the first document once, without removing its original local-storage copy. If no saved text exists, the initial welcome text becomes the first document. Database saves are serialized; switching documents waits for pending edits to save. Save failures retain the visible draft and block switching, with a **Retry** action. Conflicting edits from another tab are not overwritten silently: copy the draft before reloading. If IndexedDB is unavailable at startup, the previous text remains available for listening, but the page explicitly reports that editing will not be saved.
 
-The library belongs to this browser profile and website origin (scheme, address, and port). It does not sync to another device or follow a move to a different PC address or Netlify. Clearing browser data, browser storage eviction, or ending a private-browsing session can remove it. Export/import is planned for round three; keep original source material elsewhere meanwhile. Hosting the frontend independently and offline page loading are still separate future work.
+The library belongs to this browser profile and website origin (scheme, address, and port). It does not sync to another device or follow a move to a different PC address or Netlify. Clearing browser data, browser storage eviction, or ending a private-browsing session can remove it. Use Export database to keep a separate backup and Import/Add to transfer it to another browser or device. Hosting the frontend independently and offline page loading are still separate future work.
+
+## Backup and transfer
+
+Open **Backup and transfer** below the library cards:
+
+- **Export database** saves pending edits and prepares a snapshot of all documents, including Trash. Tap **Save backup file** to save the JSON file in Files/Downloads. Preparing the link does not itself save a file outside the browser. A newly prepared export replaces the earlier download link.
+- **Import database** validates a chosen backup and shows the incoming/current document and Trash counts. **Replace library…** then asks for final confirmation before replacing the entire library, including Trash. Export the current library first if you want to retain a recoverable copy. Empty backups can replace the library with an empty one.
+- **Add to database** shows new documents, identical matches and conflicts. Existing documents remain unchanged. Matching IDs with identical title, text, tags, color, dates and Trash state are skipped (internal revisions are ignored). For differing matching IDs, choose **Keep both** (default) or **Keep existing**. Keep both creates imported copies with new IDs, different colors from the existing documents and an “(imported copy)” title suffix. Other content and Trash state are retained. Repeating Keep both can create further copies; the preview shows conflicts each time. Documents with different IDs are treated as separate, even if their text matches.
+
+Backups preserve IDs, titles, text, tags, identity colors, timestamps, Trash state and selected document. Imported conflict copies get new identities as described above. Voice preferences, PC addresses/access keys, audio and the old localStorage text copy are not exported or replaced. Importing stops playback and refreshes the editor; export/review does not stop it. Add retains the current selection when available; replacement uses the backup's selection. Files are read locally and never sent to the speech service.
+
+Files must use the Reciter JSON format (`format: "reciter-library"`, `version: 1`, `schemaVersion: 2`, numeric `exportedAt`, `selectedId`, and `documents`). Validation checks every document, unique IDs, field types, dates, revisions, readable dark colors, tags and the selection reference. Limits are 25 MiB and 10,000 documents; an additive result must also remain exportable within those limits. Unsupported versions and malformed files are rejected before import.
+
+Imports commit in one database transaction: storage/quota failures roll back the document, selection and metadata changes. Editing the library after preview invalidates the review, so select the file again. Replacement advances internal revisions and a library generation marker to prevent stale tabs from overwriting restored data; those tabs must reload, preserving any unsaved draft first. The imported library is marked migrated, so an empty import does not resurrect the old pasted text. These operations transfer files; they do not provide automatic sync.
 
 ## Playback and fallback
 

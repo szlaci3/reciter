@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#101614">
   <meta name="color-scheme" content="dark">
   <title>Reciter — Your daily learning, spoken.</title>
-  <link rel="stylesheet" href="style.css?v=2">
+  <link rel="stylesheet" href="style.css?v=3">
 </head>
 <body>
   <main>
@@ -23,6 +23,29 @@
       <p id="selection-note" class="hint" hidden>The selected document is outside this view.</p>
       <div id="document-list" class="document-list" aria-label="Saved documents"></div>
       <p class="hint">Saved in this browser on this device. Choose a document to edit or listen.</p>
+      <details id="backup-tools">
+        <summary>Backup and transfer</summary>
+        <p class="hint">Backups include every document and Trash, with titles, text, tags and colors. Voice settings and PC access keys are not included. Files stay on your device.</p>
+        <div class="controls">
+          <button id="export-database" disabled>Export database</button>
+          <button id="import-database" disabled>Import database</button>
+          <button id="add-database" disabled>Add to database</button>
+        </div>
+        <p class="hint">Import replaces the library and Trash. Add retains existing documents. Choose a Reciter JSON backup, up to 25 MiB, then review before applying.</p>
+        <input id="backup-file" type="file" accept=".json,application/json" aria-label="Choose a Reciter backup" hidden>
+        <a id="download-backup" class="backup-download" hidden>Save backup file</a>
+        <p id="backup-status" class="hint" role="status" aria-live="polite"></p>
+        <div id="import-review" hidden>
+          <h3>Review backup</h3>
+          <p id="import-summary"></p>
+          <ul id="import-conflicts"></ul>
+          <label id="import-policy-label" for="import-policy">When a matching document has changed
+            <select id="import-policy"><option value="both">Keep both · add an imported copy</option><option value="keep">Keep existing · skip incoming version</option></select>
+          </label>
+          <p id="import-explanation" class="hint"></p>
+          <div class="controls"><button id="apply-import">Apply import</button><button id="cancel-import">Cancel</button></div>
+        </div>
+      </details>
     </section>
     <section id="material-section" aria-labelledby="material-heading">
       <h2 id="material-heading">Your document</h2>
@@ -91,7 +114,7 @@ Choose a short passage you want to learn today. Listen once for the main idea, t
       }
     }, true);
   </script>
-  <script src="dexie.js?v=4.4.6-diag2" data-source-fingerprint="275222:d069eb69"></script><script src="library.js?v=2"></script><script src="library-ui.js?v=2"></script>
+  <script src="dexie.js?v=4.4.6-diag2" data-source-fingerprint="275222:d069eb69"></script><script src="library.js?v=3"></script><script src="library-ui.js?v=3"></script>
   <script src="speech.js"></script><script src="edge-speech.js"></script><script src="app.js"></script>
 </body>
 </html>

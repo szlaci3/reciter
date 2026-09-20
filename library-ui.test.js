@@ -312,3 +312,129 @@ test('reopening an emptied library clears legacy player text and permits a fresh
   p.$('new-document').click(); await until(() => p.$('document-title').value === 'Untitled document');
   assert.equal(p.$('material').value, ''); assert.equal(p.$('material').disabled, false);
 });
+
+async function loadBackup(p, mode, contents, name = 'backup.json') {
+  p.$(mode === 'replace' ? 'import-database' : 'add-database').click();
+  const file = new p.w.File([typeof contents === 'string' ? contents : JSON.stringify(contents)], name, { type: 'application/json' });
+  Object.defineProperty(p.$('backup-file'), 'files', { configurable: true, value: [file] });
+  p.$('backup-file').dispatchEvent(new p.w.Event('change'));
+  await until(() => !p.$('import-review').hidden || p.$('backup-status').dataset.state === 'error');
+  return file;
+}
+async function readBlob(w, blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new w.FileReader(); reader.onload = () => resolve(reader.result);
+    reader.onerror = reject; reader.readAsText(blob);
+  });
+}
+
+test('export offers a mobile download containing saved content and no PC credentials', async t => {
+  const p = await page(t);
+  p.w.sessionStorage.setItem('reciter-pc-key', 'private-key');
+  p.edit('document-tags', 'Exported'); p.edit('material', 'Latest exported text');
+  let blob, next = 0, revoked = [];
+  p.w.URL.createObjectURL = value => { blob = value; return 'blob:backup-' + ++next; };
+  p.w.URL.revokeObjectURL = value => revoked.push(value);
+  p.$('export-database').click(); await until(() => !p.$('download-backup').hidden);
+  const json = await readBlob(p.w, blob), backup = JSON.parse(json);
+  assert.equal(backup.documents[0].text, 'Latest exported text');
+  assert.deepEqual(backup.documents[0].tags, ['Exported']);
+  assert.equal(json.includes('private-key'), false);
+  assert.match(p.$('download-backup').download, /^reciter-backup-.*\.json$/);
+  assert.equal(p.$('download-backup').href, 'blob:backup-1');
+  assert.match(p.$('backup-status').textContent, /Tap Save backup file/);
+  assert.equal(p.$('export-database').disabled, false, p.$('backup-status').textContent);
+  p.$('export-database').click(); await until(() => p.$('download-backup').href === 'blob:backup-2' || p.$('backup-status').dataset.state === 'error');
+  assert.equal(p.$('download-backup').href, 'blob:backup-2', p.$('backup-status').textContent);
+  assert.deepEqual(revoked, ['blob:backup-1']);
+});
+
+test('replacement validates and previews without mutation, supports cancel, and refreshes same-ID text after confirmation', async t => {
+  const p = await page(t), backup = await p.store.exportBackup(), before = await p.store.list();
+  backup.documents[0].title = 'Restored title'; backup.documents[0].text = 'Restored content';
+  backup.documents[0].tags = ['Restored'];
+  await loadBackup(p, 'replace', backup);
+  assert.match(p.$('import-summary').textContent, /replace all 1 current documents/);
+  assert.deepEqual(await p.store.list(), before);
+  p.$('cancel-import').click(); assert.equal(p.$('import-review').hidden, true);
+  assert.deepEqual(await p.store.list(), before);
+  await loadBackup(p, 'replace', backup);
+  let prompts = [];
+  p.w.confirm = message => { prompts.push(message); return false; };
+  p.$('apply-import').click(); assert.equal(p.$('import-review').hidden, false);
+  assert.deepEqual(await p.store.list(), before); assert.match(prompts[0], /Replace all 1 current documents/);
+  p.$('play').click(); const canceled = p.canceled();
+  p.w.confirm = () => true; p.$('apply-import').click();
+  await until(() => /Library replaced/.test(p.$('backup-status').textContent));
+  assert.equal(p.$('document-title').value, 'Restored title');
+  assert.equal(p.$('material').value, 'Restored content'); assert.equal(p.$('document-tags').value, 'Restored');
+  assert.ok(p.canceled() > canceled);
+  p.$('play').click(); assert.equal(p.spoken.at(-1).text, 'Restored content');
+  assert.equal(p.w.document.querySelector('[aria-pressed=true]').dataset.documentId, backup.selectedId);
+  assert.equal(p.$('import-review').hidden, true);
+});
+
+test('add review exposes conflict choices safely and supports keeping existing or both versions', async t => {
+  const p = await page(t), backup = await p.store.exportBackup(), original = (await p.store.list())[0];
+  backup.documents[0].title = '<img src=x onerror=alert(1)>'; backup.documents[0].text = 'Incoming version';
+  await loadBackup(p, 'add', backup, '<script>bad</script>.json');
+  assert.equal(p.$('import-policy-label').hidden, false);
+  assert.match(p.$('import-conflicts').textContent, /<img/);
+  assert.equal(p.w.document.querySelector('#import-review img, #import-review script'), null);
+  choose(p, 'import-policy', 'keep'); p.$('apply-import').click();
+  await until(() => /Added 0.*skipped 1/.test(p.$('backup-status').textContent));
+  assert.deepEqual(await p.store.list(), [original]);
+  await loadBackup(p, 'add', backup); p.$('apply-import').click();
+  await until(() => /Added 1 documents \(1 imported copies\)/.test(p.$('backup-status').textContent));
+  assert.equal((await p.store.list()).length, 2);
+  assert.deepEqual(await p.store.db.documents.get(original.id), original);
+  assert.equal(p.$('material').value, original.text);
+  assert.equal(p.w.document.querySelector('#document-list img'), null);
+});
+
+test('invalid or unreadable files and failed replacements leave the displayed library intact', async t => {
+  const p = await page(t), original = await p.store.list();
+  await loadBackup(p, 'replace', '{bad JSON');
+  assert.match(p.$('backup-status').textContent, /not valid JSON.*No import was applied/);
+  assert.equal(p.$('import-review').hidden, true);
+  assert.deepEqual(await p.store.list(), original);
+  const backup = await p.store.exportBackup(); backup.documents = []; backup.selectedId = null;
+  await loadBackup(p, 'replace', backup);
+  const put = p.store.db.meta.put.bind(p.store.db.meta);
+  p.store.db.meta.put = async () => { throw new Error('Quota failure'); };
+  p.w.confirm = () => true; p.$('apply-import').click();
+  await until(() => /Quota failure.*No import was applied/.test(p.$('backup-status').textContent));
+  p.store.db.meta.put = put;
+  assert.equal(p.$('material').value, original[0].text);
+  assert.deepEqual(await p.store.list(), original);
+  p.w.FileReader = class { readAsText() { this.onerror(); } };
+  await loadBackup(p, 'replace', backup);
+  assert.match(p.$('backup-status').textContent, /could not be read/);
+  assert.deepEqual(await p.store.list(), original);
+});
+
+test('editing after review prevents replacement and requires a new review', async t => {
+  const p = await page(t), backup = await p.store.exportBackup();
+  backup.documents = []; backup.selectedId = null;
+  await loadBackup(p, 'replace', backup);
+  p.edit('material', 'New edits after review'); await p.saved();
+  p.w.confirm = () => true; p.$('apply-import').click();
+  await until(() => p.$('backup-status').dataset.state === 'error');
+  assert.match(p.$('backup-status').textContent, /changed since this review/);
+  assert.equal((await p.store.list())[0].text, 'New edits after review');
+  assert.equal(p.$('import-review').hidden, true);
+});
+
+test('empty replacement clears the editor and a selected trashed import opens Trash read-only', async t => {
+  const p = await page(t), backup = await p.store.exportBackup();
+  p.w.confirm = () => true;
+  await loadBackup(p, 'replace', { ...backup, documents: [], selectedId: null });
+  p.$('apply-import').click(); await until(() => /Library replaced: 0/.test(p.$('backup-status').textContent));
+  assert.equal(p.$('material').value, ''); assert.equal(p.$('play').disabled, true);
+  backup.documents[0].trashedAt = Date.now();
+  await loadBackup(p, 'replace', backup);
+  p.$('apply-import').click(); await until(() => /Library replaced: 1/.test(p.$('backup-status').textContent));
+  assert.equal(p.$('library-view').value, 'trash'); assert.equal(p.$('material').readOnly, true);
+  assert.equal(p.$('material').value, backup.documents[0].text);
+  assert.equal(p.$('restore-document').hidden, false);
+});

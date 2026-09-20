@@ -6,28 +6,34 @@
     const search = $('library-search'), view = $('library-view'), sort = $('library-sort'), topic = $('library-tag');
     let ready = false, displayedId, renderedCards = '', failedNavigation = null, failedAction = null;
     let startupStep = 'loading library scripts';
+    let transferBusy = false, importMode = null, pendingImport = null, downloadUrl = null, displayedVersion;
+    const backupStatus = $('backup-status');
     function render(editor) {
       if (!ready) startupStep = 'displaying the library';
+      const busy = editor.busy || transferBusy;
       const active = editor.active, activeId = active?.id || null, trashed = Boolean(active?.trashedAt);
       if (!ready && trashed) view.value = 'trash';
-      if (activeId !== displayedId) {
-        displayedId = activeId;
+      if (activeId !== displayedId || displayedVersion !== editor.loadVersion) {
+        displayedId = activeId; displayedVersion = editor.loadVersion;
         title.value = active?.title || ''; material.value = active?.text || ''; tags.value = (active?.tags || []).join(', ');
         onTextChanged();
       }
-      title.disabled = material.disabled = tags.disabled = !ready || editor.busy || !active;
+      title.disabled = material.disabled = tags.disabled = !ready || busy || !active;
       title.readOnly = material.readOnly = tags.readOnly = trashed;
-      $('new-document').disabled = !ready || editor.busy;
-      for (const field of [search, view, sort, topic]) field.disabled = !ready || editor.busy;
+      $('new-document').disabled = !ready || busy;
+      for (const id of ['export-database', 'import-database', 'add-database', 'apply-import', 'cancel-import', 'import-policy']) {
+        $(id).disabled = !ready || busy;
+      }
+      for (const field of [search, view, sort, topic]) field.disabled = !ready || busy;
       for (const id of ['duplicate-document', 'trash-document', 'restore-document', 'delete-document']) {
-        $(id).disabled = !ready || editor.busy || !active;
+        $(id).disabled = !ready || busy || !active;
       }
       $('duplicate-document').hidden = $('trash-document').hidden = trashed;
       $('restore-document').hidden = $('delete-document').hidden = !trashed;
       $('trash-note').hidden = !trashed;
       $('autosave-note').hidden = !active || trashed;
       $('retry-save').hidden = editor.state !== 'error';
-      $('retry-save').disabled = editor.busy;
+      $('retry-save').disabled = busy;
       status.textContent = editor.state === 'error'
         ? (editor.error?.name === 'ConflictError' ? 'Not saved. ' + editor.error.message
           : 'Could not complete this action. Your document is still here. Retry before leaving this page.')
@@ -38,7 +44,7 @@
       else $('material-section').style.removeProperty('--document-color');
       $('editing-document').textContent = active ? active.title.trim() || 'Untitled document' : 'No document selected';
       // Keep existing buttons/focus while typing; update cards after saves.
-      const signature = JSON.stringify([editor.documents, activeId, editor.busy, view.value, search.value, sort.value, topic.value]);
+      const signature = JSON.stringify([editor.documents, activeId, busy, view.value, search.value, sort.value, topic.value]);
       if (signature === renderedCards) return;
       renderedCards = signature;
       const trash = view.value === 'trash';
@@ -68,7 +74,7 @@
         button.dataset.documentId = doc.id;
         button.style.setProperty('--document-color', doc.color);
         button.setAttribute('aria-pressed', String(doc.id === activeId));
-        button.disabled = editor.busy;
+        button.disabled = busy;
         const name = document.createElement('strong'); name.textContent = doc.title.trim() || 'Untitled document';
         const preview = document.createElement('span'); preview.className = 'document-preview';
         preview.textContent = doc.text.replace(/\s+/g, ' ').trim().slice(0, 100) || 'No text yet.';
@@ -139,20 +145,115 @@
       render(editor);
     }
     async function switchDocument(id) {
-      if (editor.busy || (id && id === editor.active?.id)) return;
+      if (editor.busy || transferBusy || (id && id === editor.active?.id)) return;
       onSwitch();
       const switched = await editor.navigate(id);
       failedNavigation = switched ? null : { id }; failedAction = null;
       if (switched && !id) { showLibrary(); title.focus(); title.select(); }
     }
     async function organize(action) {
-      if (editor.busy || !editor.active) return;
+      if (editor.busy || transferBusy || !editor.active) return;
       if (action === 'delete' && !root.confirm(`Permanently delete “${editor.active.title.trim() || 'Untitled document'}”? This cannot be undone.`)) return;
       onSwitch();
       const completed = await editor.organize(action);
       failedAction = completed ? null : action; failedNavigation = null;
       if (completed && (action === 'duplicate' || action === 'restore')) showLibrary();
     }
+    function transferMessage(message, error = false) {
+      backupStatus.textContent = message; backupStatus.dataset.state = error ? 'error' : 'ready';
+    }
+    function closeReview() {
+      pendingImport = null; $('import-review').hidden = true;
+    }
+    function showReview(plan, filename) {
+      const total = plan.backup.documents.length;
+      $('import-summary').textContent = `${filename}: ${total - plan.incomingTrash} documents and ${plan.incomingTrash} in Trash. `
+        + (plan.mode === 'replace'
+          ? `This will replace all ${plan.currentCount - plan.currentTrash} current documents and ${plan.currentTrash} in Trash.`
+          : `${plan.added.length} new, ${plan.identical.length} identical (skipped), ${plan.conflicts.length} with matching IDs but different content or metadata.`);
+      const rows = plan.mode === 'add' ? plan.conflicts.map(item => {
+        const row = document.createElement('li');
+        row.textContent = `Existing: ${item.currentTitle || 'Untitled document'} · Incoming: ${item.title || 'Untitled document'}`;
+        return row;
+      }) : [];
+      $('import-conflicts').replaceChildren(...rows);
+      $('import-policy-label').hidden = plan.mode !== 'add' || !rows.length;
+      $('import-policy').value = 'both';
+      $('import-explanation').textContent = plan.mode === 'replace'
+        ? 'Replacement removes the current library, including Trash. Export it first if you want to keep a backup. A final confirmation follows.'
+        : 'Existing documents stay unchanged. Identical matching documents are skipped. Keep both gives each incoming conflict a new ID, a different color and “(imported copy)” in its title. Repeating this choice can create further copies.';
+      $('apply-import').textContent = plan.mode === 'replace' ? 'Replace library…' : 'Add documents';
+      $('import-review').hidden = false;
+      transferMessage('Backup validated. Review the details before applying.');
+    }
+    $('export-database').addEventListener('click', async () => {
+      if (editor.busy || transferBusy) return;
+      transferBusy = true; render(editor); transferMessage('Preparing backup…');
+      $('download-backup').hidden = true;
+      try {
+        const backup = await editor.exportBackup();
+        const blob = new Blob([JSON.stringify(backup)], { type: 'application/json' });
+        // A second, direct tap on the download link works without relying on
+        // user activation surviving asynchronous storage reads on mobile.
+        const url = URL.createObjectURL(blob);
+        if (downloadUrl) URL.revokeObjectURL(downloadUrl);
+        downloadUrl = url;
+        // Use a fresh link so a previous blob URL cannot remain cached.
+        const previousLink = $('download-backup'), link = previousLink.cloneNode(false);
+        link.href = url;
+        link.download = 'reciter-backup-' + new Date(backup.exportedAt).toISOString().replace(/[:.]/g, '-') + '.json';
+        link.textContent = `Save backup file · ${backup.documents.length} documents · ${new Date(backup.exportedAt).toLocaleTimeString()}`;
+        link.hidden = false; previousLink.replaceWith(link);
+        transferMessage('Backup ready. Tap Save backup file and keep the JSON file in Files or Downloads.');
+      } catch (error) { transferMessage('Export failed: ' + error.message, true); }
+      finally { transferBusy = false; render(editor); }
+    });
+    function chooseBackup(mode) {
+      if (editor.busy || transferBusy) return;
+      closeReview(); importMode = mode; transferMessage('Choose a backup file to review.');
+      $('backup-file').value = ''; $('backup-file').click();
+    }
+    $('import-database').addEventListener('click', () => chooseBackup('replace'));
+    $('add-database').addEventListener('click', () => chooseBackup('add'));
+    $('backup-file').addEventListener('change', async () => {
+      const file = $('backup-file').files[0], mode = importMode;
+      if (!file || !mode || editor.busy || transferBusy) return;
+      closeReview(); transferBusy = true; render(editor); transferMessage('Validating backup…');
+      try {
+        if (file.size > root.ReciterLibrary.MAX_BACKUP_BYTES) throw new Error('Backup files must be at most 25 MiB.');
+        const text = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = () => reject(new Error('The backup file could not be read.'));
+          reader.onabort = () => reject(new Error('Reading the backup was canceled.'));
+          reader.readAsText(file);
+        });
+        const backup = root.ReciterLibrary.parseBackup(text);
+        pendingImport = await editor.prepareImport(backup, mode);
+        showReview(pendingImport, file.name);
+      } catch (error) { transferMessage(error.message + ' No import was applied.', true); }
+      finally { transferBusy = false; render(editor); }
+    });
+    $('cancel-import').addEventListener('click', () => {
+      closeReview(); transferMessage('Import canceled. No import was applied.');
+    });
+    $('apply-import').addEventListener('click', async () => {
+      if (!pendingImport || editor.busy || transferBusy) return;
+      const plan = pendingImport;
+      if (plan.mode === 'replace' && !root.confirm(`Replace all ${plan.currentCount} current documents (including Trash) with ${plan.backup.documents.length} documents from this backup? This cannot be undone without a backup of the current library.`)) return;
+      transferBusy = true; render(editor); transferMessage('Applying backup…');
+      try {
+        const result = await editor.applyImport(plan, $('import-policy').value);
+        // Stop/reset even when a replacement retains the selected ID.
+        onSwitch(); failedNavigation = failedAction = null;
+        view.value = editor.active?.trashedAt ? 'trash' : 'library'; search.value = ''; topic.value = '';
+        closeReview();
+        transferMessage(plan.mode === 'replace' ? `Library replaced: ${result.documents.length} documents, including Trash.`
+          : `Added ${result.added} documents (${result.copies} imported copies); skipped ${result.skipped}. Existing documents retained.`);
+      } catch (error) {
+        closeReview(); transferMessage(error.message + ' No import was applied. Select the file again to retry.', true);
+      } finally { transferBusy = false; render(editor); }
+    });
     title.addEventListener('input', () => editor.edit({ title: title.value }));
     material.addEventListener('input', () => editor.edit({ text: material.value }));
     tags.addEventListener('input', () => editor.edit({ tags: root.ReciterLibrary.normalizeTags(tags.value) }));

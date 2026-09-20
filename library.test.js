@@ -277,3 +277,161 @@ test('duplication uses a different identity color even after the palette is fill
   assert.equal(await editor.organize('duplicate'), true);
   assert.notEqual(editor.active.color, color);
 });
+
+async function backupFixture(t) {
+  const source = store(t), editor = new LibraryEditor(source);
+  await editor.initialize('Active document');
+  await editor.edit({ tags: ['Science'] });
+  const activeId = editor.active.id;
+  await editor.navigate(); await editor.edit({ title: 'Trashed document', text: 'Keep this in Trash.', tags: ['History'] });
+  await editor.organize('trash'); await editor.navigate(activeId);
+  return source.exportBackup();
+}
+
+test('backup round-trip retains documents, Trash, identity, tags and selection, without private settings', async t => {
+  const { parseBackup } = require('./library.js');
+  const backup = await backupFixture(t), target = store(t);
+  await target.initialize('Replace this');
+  const plan = await target.prepareImport(parseBackup(JSON.stringify(backup)), 'replace');
+  assert.equal((await target.list())[0].text, 'Replace this');
+  await target.applyImport(plan);
+  target.db.close(); const opened = await target.initialize('Do not migrate again');
+  assert.equal(opened.selectedId, backup.selectedId);
+  const exported = await target.exportBackup();
+  const withoutRevision = doc => { const { revision, ...rest } = doc; return rest; };
+  assert.deepEqual(exported.documents.map(withoutRevision), backup.documents.map(withoutRevision));
+  assert.equal(exported.documents.filter(doc => doc.trashedAt).length, 1);
+  assert.deepEqual(Object.keys(exported).sort(), ['documents', 'exportedAt', 'format', 'schemaVersion', 'selectedId', 'version']);
+  const repeated = await target.prepareImport(backup, 'add');
+  assert.equal(repeated.identical.length, 2); assert.equal(repeated.conflicts.length, 0);
+});
+
+test('invalid backups are rejected before any library or metadata changes', async t => {
+  const { parseBackup, validateBackup } = require('./library.js');
+  const backup = await backupFixture(t), target = store(t);
+  await target.initialize('Original target');
+  const original = await target.list(), meta = await target.db.meta.toArray();
+  for (const modify of [
+    b => { b.version = 999; }, b => { b.schemaVersion = 99; }, b => { b.format = 'other-app'; },
+    b => { b.documents = {}; }, b => { b.documents.push(b.documents[0]); },
+    b => { b.documents[0].id = ''; }, b => { b.documents[0].text = 42; },
+    b => { b.documents[0].title = null; }, b => { b.documents[0].color = 'url(javascript:bad)'; },
+    b => { b.documents[0].color = '#ffffff'; }, b => { b.documents[0].tags = ['tag', 'TAG']; },
+    b => { b.documents[0].tags = [null]; }, b => { b.documents[0].revision = -1; },
+    b => { b.documents[0].createdAt = Infinity; }, b => { b.documents[0].trashedAt = 'yesterday'; },
+    b => { b.selectedId = 'missing'; }
+  ]) {
+    const broken = structuredClone(backup); modify(broken);
+    await assert.rejects(target.prepareImport(broken, 'replace'), /Invalid backup/);
+    assert.deepEqual(await target.list(), original); assert.deepEqual(await target.db.meta.toArray(), meta);
+  }
+  assert.throws(() => parseBackup('{broken JSON'), /not valid JSON/);
+  assert.throws(() => parseBackup(' '.repeat(25 * 1024 * 1024 + 1)), /25 MiB/);
+  assert.deepEqual(parseBackup('\uFEFF' + JSON.stringify(backup)), validateBackup(backup));
+  const hostile = JSON.parse(JSON.stringify(backup));
+  hostile.documents[0].__proto__ = { polluted: 'bad' };
+  const clean = validateBackup(hostile);
+  assert.equal(clean.documents[0].polluted, undefined); assert.equal({}.polluted, undefined);
+});
+
+test('add skips identical IDs, keeps both differing versions, and never overwrites existing documents', async t => {
+  const s = store(t); await s.initialize('Existing');
+  const backup = await s.exportBackup();
+  const original = structuredClone(backup.documents[0]);
+  const identicalPlan = await s.prepareImport(backup, 'add');
+  assert.equal(identicalPlan.identical.length, 1);
+  const identical = await s.applyImport(identicalPlan);
+  assert.equal(identical.added, 0); assert.equal(identical.skipped, 1);
+  const incoming = structuredClone(backup);
+  incoming.documents[0].text = 'Incoming conflicting text'; incoming.documents[0].tags = ['Imported'];
+  incoming.documents.push({ ...original, id: 'new-id', title: 'New incoming', tags: ['New'], trashedAt: Date.now() });
+  const plan = await s.prepareImport(incoming, 'add');
+  assert.equal(plan.conflicts.length, 1); assert.equal(plan.added.length, 1);
+  const result = await s.applyImport(plan, 'both');
+  assert.equal(result.added, 2); assert.equal(result.copies, 1);
+  assert.deepEqual(await s.db.documents.get(original.id), original);
+  const copy = result.documents.find(doc => doc.id !== original.id && doc.id !== 'new-id');
+  assert.equal(copy.text, 'Incoming conflicting text'); assert.deepEqual(copy.tags, ['Imported']);
+  assert.equal(copy.title, 'Existing (imported copy)'); assert.notEqual(copy.color, original.color);
+  assert.equal(result.selectedId, original.id);
+  assert.equal((await s.db.documents.get('new-id')).color, original.color);
+  assert.ok((await s.db.documents.get('new-id')).trashedAt);
+});
+
+test('keep-existing policy skips conflicts, including an active versus Trash conflict', async t => {
+  const s = store(t); await s.initialize('Local');
+  const backup = await s.exportBackup(), original = backup.documents[0];
+  backup.documents[0] = { ...original, trashedAt: Date.now() };
+  const plan = await s.prepareImport(backup, 'add');
+  assert.equal(plan.conflicts.length, 1);
+  const result = await s.applyImport(plan, 'keep');
+  assert.equal(result.added, 0); assert.equal(result.skipped, 1);
+  assert.deepEqual(await s.list(), [original]);
+});
+
+test('empty replacement stays empty after reload and does not resurrect legacy text', async t => {
+  const s = store(t); await s.initialize('Legacy');
+  const backup = await s.exportBackup(); backup.documents = []; backup.selectedId = null;
+  await s.applyImport(await s.prepareImport(backup, 'replace'));
+  s.db.close(); const result = await s.initialize('Legacy');
+  assert.deepEqual(result.documents, []); assert.equal(result.selectedId, undefined);
+  assert.equal((await s.db.meta.get('initial-document-v1')).value, true);
+});
+
+test('replacement and additive failures roll back documents, selection and generation', async t => {
+  const backup = await backupFixture(t), s = store(t); await s.initialize('Keep original');
+  for (const mode of ['replace', 'add']) {
+    const original = await s.list(), meta = await s.db.meta.toArray(), generation = s.generation;
+    const plan = await s.prepareImport(backup, mode), put = s.db.meta.put.bind(s.db.meta);
+    s.db.meta.put = async () => { throw new Error('Quota exceeded'); };
+    await assert.rejects(s.applyImport(plan), /Quota exceeded/);
+    s.db.meta.put = put;
+    assert.deepEqual(await s.list(), original); assert.deepEqual(await s.db.meta.toArray(), meta);
+    assert.equal(s.generation, generation);
+  }
+  await s.applyImport(await s.prepareImport(backup, 'replace'));
+  assert.equal((await s.list()).length, 2);
+});
+
+test('changes in another tab after review invalidate both import modes', async t => {
+  const s = store(t); await s.initialize('Local');
+  const backup = await s.exportBackup();
+  for (const mode of ['add', 'replace']) {
+    const plan = await s.prepareImport(backup, mode);
+    await s.save({ ...(await s.list())[0], text: 'New edits after review ' + mode });
+    const current = await s.list();
+    await assert.rejects(s.applyImport(plan), /changed since this review/);
+    assert.deepEqual(await s.list(), current);
+  }
+});
+
+test('a replacement invalidates older tabs even when imported IDs and revisions match', async t => {
+  const name = 'replacement-tabs-' + crypto.randomUUID(), s = store(t, name), other = store(t, name);
+  await s.initialize('Local'); await other.initialize('Unused');
+  const stale = (await other.list())[0], backup = await s.exportBackup();
+  backup.documents[0].text = 'Restored backup';
+  await s.applyImport(await s.prepareImport(backup, 'replace'));
+  await assert.rejects(other.save({ ...stale, text: 'Stale overwrite' }), /replaced in another tab/);
+  await assert.rejects(other.create(), /replaced in another tab/);
+  await assert.rejects(other.organize('trash', stale), /replaced in another tab/);
+  await assert.rejects(s.save(stale), { name: 'ConflictError' });
+  assert.equal((await s.list())[0].text, 'Restored backup');
+  await other.initialize('Unused');
+  await other.save({ ...(await other.list())[0], text: 'Fresh edits' });
+  assert.equal((await s.list())[0].text, 'Fresh edits');
+});
+
+test('export flushes pending edits and transfer failures preserve the visible draft', async t => {
+  const s = store(t), editor = new LibraryEditor(s); await editor.initialize('Local');
+  const save = s.save.bind(s); let release;
+  s.save = async draft => { await new Promise(resolve => { release = resolve; }); return save(draft); };
+  const saving = editor.edit({ text: 'Latest draft' }), exporting = editor.exportBackup();
+  release(); await saving; const backup = await exporting;
+  assert.equal(backup.documents[0].text, 'Latest draft'); assert.equal(editor.busy, false);
+  s.save = async () => { throw new Error('Save blocked'); };
+  await editor.edit({ text: 'Unsaved draft' });
+  await assert.rejects(editor.exportBackup(), /Save blocked/);
+  await assert.rejects(editor.prepareImport(backup, 'replace'), /Save blocked/);
+  assert.equal(editor.active.text, 'Unsaved draft'); assert.equal(editor.dirty, true);
+  assert.equal(editor.busy, false);
+});
