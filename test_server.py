@@ -110,6 +110,29 @@ class ServiceTest(AioHTTPTestCase):
             local = Path(__file__).parent / path.split('?')[0].lstrip('/')
             self.assertEqual(await response.read(), local.read_bytes())
 
+    async def test_large_static_responses_preserve_bytes_without_sendfile(self):
+        expected = (Path(__file__).parent / 'dexie.js').read_bytes()
+        loop = asyncio.get_running_loop()
+
+        async def download():
+            response = await self.client.get('/dexie.js?v=4.4.6-diag2')
+            self.assertEqual(response.status, 200)
+            self.assertEqual(response.headers['X-Reciter-Static'], 'buffered-v1')
+            self.assertEqual(response.headers['Cache-Control'], 'no-store')
+            self.assertEqual(int(response.headers['Content-Length']), len(expected))
+            chunks = []
+            async for chunk in response.content.iter_chunked(4096):
+                chunks.append(chunk)
+                await asyncio.sleep(0)
+            self.assertEqual(b''.join(chunks), expected)
+
+        # Exercise interleaved large responses and prohibit the suspect transfer
+        # path on all platforms, including Windows when the user runs this suite.
+        with patch.object(loop, 'sendfile', new_callable=AsyncMock) as sendfile:
+            sendfile.side_effect = AssertionError('Static assets must bypass sendfile')
+            await asyncio.gather(*(download() for _ in range(6)))
+            sendfile.assert_not_awaited()
+
     async def test_voice_validation_and_audio_cache(self):
         headers = {'Authorization': 'Bearer abcd'}
         self.assertEqual((await self.client.get('/api/voices', headers=headers)).status, 200)

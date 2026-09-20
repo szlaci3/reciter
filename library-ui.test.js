@@ -31,7 +31,7 @@ async function page(t, { legacy = 'Legacy title.\n\nLegacy second passage.', bef
   w.eval(source('app.js'));
   t.after(() => { instances.forEach(s => s.db.close()); w.close(); });
   const $ = id => w.document.getElementById(id);
-  await until(() => /Saved on this device|Library could not start/.test($('save-status').textContent));
+  await until(() => /Saved on this device|Library could not start|Choose or create a document/.test($('save-status').textContent));
   const edit = (id, text) => { $(id).value = text; $(id).dispatchEvent(new w.Event('input', { bubbles: true })); };
   const saved = () => until(() => $('save-status').textContent === 'Saved on this device');
   return { w, $, edit, saved, spoken, store: instances[0], canceled: () => canceled };
@@ -186,4 +186,129 @@ test('dependency diagnostics flag changed contents without executing the fetched
   assert.equal(p.store, undefined);
   assert.equal(JSON.parse(p.w.localStorage.getItem('reciter-listening-v1')).text,
     'Legacy title.\n\nLegacy second passage.');
+});
+
+function choose(p, id, value) {
+  p.$(id).value = value;
+  p.$(id).dispatchEvent(new p.w.Event('change', { bubbles: true }));
+}
+const cardNames = p => Array.from(p.w.document.querySelectorAll('.document-card strong'), node => node.textContent);
+
+test('search, sorting and topic filtering keep selected text and playback intact', async t => {
+  const p = await page(t);
+  p.edit('document-title', 'Zebra'); p.edit('document-tags', 'Science, Space, SCIENCE'); await p.saved();
+  const firstId = p.w.document.querySelector('.document-card').dataset.documentId;
+  p.$('new-document').click(); await until(() => p.$('document-title').value === 'Untitled document');
+  p.edit('document-title', 'Alpha'); p.edit('material', 'Ocean life'); p.edit('document-tags', 'Nature'); await p.saved();
+  p.$('play').click(); const canceled = p.canceled();
+  choose(p, 'library-sort', 'title'); assert.deepEqual(cardNames(p), ['Alpha', 'Zebra']);
+  p.edit('library-search', 'legacy space'); assert.deepEqual(cardNames(p), ['Zebra']);
+  assert.equal(p.$('document-title').value, 'Alpha'); assert.equal(p.$('material').value, 'Ocean life');
+  assert.equal(p.$('selection-note').hidden, false);
+  assert.equal(p.canceled(), canceled);
+  assert.equal(p.w.document.querySelector('[aria-pressed=true]'), null);
+  p.edit('library-search', ''); choose(p, 'library-tag', 'science');
+  assert.deepEqual(cardNames(p), ['Zebra']);
+  p.w.document.querySelector('.document-card').click(); await until(() => p.$('document-title').value === 'Zebra');
+  assert.equal(p.w.document.querySelector('[aria-pressed=true]').dataset.documentId, firstId);
+  assert.equal(p.$('document-tags').value, 'Science, Space');
+  assert.equal(p.$('selection-note').hidden, true);
+  p.edit('library-search', 'nothing matches');
+  assert.match(p.$('library-empty').textContent, /No documents match/);
+  assert.equal(cardNames(p).length, 0);
+});
+
+test('tag edits preserve playback and render tag markup as text', async t => {
+  const p = await page(t);
+  p.$('play').click(); const canceled = p.canceled();
+  p.edit('document-tags', '<img src=x onerror=alert(1)>, Science'); await p.saved();
+  assert.equal(p.canceled(), canceled);
+  assert.equal(p.w.document.querySelector('#document-list img'), null);
+  assert.match(p.w.document.querySelector('.document-tags').textContent, /<img/);
+  assert.deepEqual(Array.from((await p.store.list())[0].tags), ['<img src=x onerror=alert(1)>', 'Science']);
+});
+
+test('duplicate opens the saved copy and clears filters so the new selection is visible', async t => {
+  const p = await page(t);
+  p.edit('document-tags', 'History'); await p.saved();
+  const first = (await p.store.list())[0];
+  p.edit('library-search', 'no matches');
+  p.$('duplicate-document').click();
+  await until(() => p.$('document-title').value === 'Legacy title. (copy)' && !p.$('duplicate-document').disabled);
+  assert.equal(p.$('library-search').value, '');
+  const copy = (await p.store.list()).find(doc => doc.id !== first.id);
+  assert.equal(copy.text, first.text); assert.deepEqual(copy.tags, first.tags);
+  assert.notEqual(copy.color, first.color);
+  assert.equal(p.w.document.querySelector('[aria-pressed=true]').dataset.documentId, copy.id);
+});
+
+test('Trash is read-only, can restore identity, and permanent deletion requires confirmation', async t => {
+  const p = await page(t);
+  const first = (await p.store.list())[0];
+  p.$('play').click(); const canceled = p.canceled();
+  p.$('trash-document').click(); await until(() => p.$('editing-document').textContent === 'No document selected');
+  assert.ok(p.canceled() > canceled);
+  assert.equal(p.$('material').value, ''); assert.equal(p.$('play').disabled, true);
+  assert.equal(p.$('material').disabled, true);
+  assert.match(p.$('library-empty').textContent, /Your library is empty/);
+  assert.match(p.$('library-view').options[1].textContent, /Trash \(1\)/);
+  choose(p, 'library-view', 'trash'); p.w.document.querySelector('.document-card').click();
+  await until(() => !p.$('restore-document').disabled);
+  assert.equal(p.$('trash-note').hidden, false);
+  assert.equal(p.$('document-title').readOnly, true); assert.equal(p.$('document-tags').readOnly, true);
+  assert.equal(p.$('material').readOnly, true); assert.equal(p.$('material').value, first.text);
+  assert.equal(p.$('play').disabled, false);
+  p.$('restore-document').click(); await until(() => p.$('library-view').value === 'library');
+  assert.equal(p.$('material').disabled, false);
+  assert.equal(p.w.document.querySelector('[aria-pressed=true]').dataset.documentId, first.id);
+  assert.equal(p.w.document.querySelector('.document-card').style.getPropertyValue('--document-color'), first.color);
+  p.$('trash-document').click(); await until(() => p.$('editing-document').textContent === 'No document selected');
+  choose(p, 'library-view', 'trash'); p.w.document.querySelector('.document-card').click();
+  await until(() => !p.$('delete-document').disabled);
+  let prompts = [];
+  p.w.confirm = message => { prompts.push(message); return false; };
+  p.$('delete-document').click();
+  assert.equal((await p.store.list()).length, 1);
+  assert.match(prompts[0], /Legacy title\..*cannot be undone/);
+  p.w.confirm = () => true; p.$('delete-document').click();
+  await until(() => p.$('editing-document').textContent === 'No document selected');
+  assert.equal((await p.store.list()).length, 0);
+  assert.equal(p.$('library-empty').textContent, 'Trash is empty.');
+  assert.equal(JSON.parse(p.w.localStorage.getItem('reciter-listening-v1')).text, first.text);
+  p.$('new-document').click(); await until(() => p.$('document-title').value === 'Untitled document');
+  assert.equal(p.$('library-view').value, 'library'); assert.equal(p.$('material').value, '');
+});
+
+test('failed permanent deletion preserves Trash and retry requests confirmation again', async t => {
+  const p = await page(t);
+  p.$('trash-document').click(); await until(() => p.$('editing-document').textContent === 'No document selected');
+  choose(p, 'library-view', 'trash'); p.w.document.querySelector('.document-card').click();
+  await until(() => !p.$('delete-document').disabled);
+  const organize = p.store.organize.bind(p.store);
+  p.store.organize = async () => { throw new Error('Temporary failure'); };
+  let confirmations = 0; p.w.confirm = () => { confirmations++; return true; };
+  p.$('delete-document').click(); await until(() => p.$('save-status').dataset.state === 'error');
+  assert.equal((await p.store.list()).length, 1);
+  assert.equal(p.$('material').value, 'Legacy title.\n\nLegacy second passage.');
+  p.store.organize = organize;
+  p.$('retry-save').click(); await until(() => p.$('editing-document').textContent === 'No document selected');
+  assert.equal(confirmations, 2); assert.equal((await p.store.list()).length, 0);
+});
+
+test('reopening an emptied library clears legacy player text and permits a fresh document', async t => {
+  const p = await page(t, { beforeApp(w) {
+    const initialize = w.ReciterLibrary.LibraryStore.prototype.initialize;
+    w.ReciterLibrary.LibraryStore.prototype.initialize = async function (text) {
+      const result = await initialize.call(this, text);
+      await this.organize('trash', result.documents[0]);
+      const doc = (await this.list())[0];
+      await this.organize('delete', doc);
+      return initialize.call(this, text);
+    };
+  } });
+  assert.equal(p.$('material').value, ''); assert.equal(p.$('play').disabled, true);
+  assert.equal(p.$('new-document').disabled, false);
+  assert.equal(p.$('document-count').textContent, '0 documents');
+  p.$('new-document').click(); await until(() => p.$('document-title').value === 'Untitled document');
+  assert.equal(p.$('material').value, ''); assert.equal(p.$('material').disabled, false);
 });

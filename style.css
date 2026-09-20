@@ -26,7 +26,7 @@ label { display: block; font-size: .9rem; font-weight: 600; margin: 12px 0 8px; 
 label span, .hint, footer { font-weight: 400; font-size: .82rem; color: var(--muted); }
 label span { display: block; }
 textarea, select, button, input { font: inherit; }
-textarea, select, input[type=url], #pc-key, #document-title {
+textarea, select, input[type=url], #pc-key, #document-title, #document-tags, #library-search {
   display: block; width: 100%; border: 1px solid var(--border);
   border-radius: 10px; background: var(--field); color: var(--text);
   padding: 12px; font-size: 1rem;
@@ -43,7 +43,7 @@ button { border: 1px solid var(--border); background: #28392f; color: var(--text
 .primary { background: var(--accent); color: #102619; border-color: var(--accent); font-weight: 700; flex: 1; }
 button:disabled { opacity: .45; cursor: default; }
 @media (hover: hover) {
-  button:not(:disabled):hover { background: #354d3e; border-color: #8ead99; }
+  button:not(.document-card):not(:disabled):hover { background: #354d3e; border-color: #8ead99; }
   .primary:not(:disabled):hover { background: #b2ecc9; border-color: #b2ecc9; }
   summary:hover { color: var(--accent); }
 }
@@ -61,7 +61,6 @@ summary { cursor: pointer; }
 .document-preview { font-size: .82rem; }
 .document-selection { font-size: .75rem; margin-top: auto; }
 .document-card[aria-pressed=true] { border-color: #fff; }
-.document-card:not(:disabled):hover { background: var(--document-color); border-color: #fff; }
 #material-section { border-top: 6px solid var(--document-color, var(--border)); }
 #editing-document { overflow-wrap: anywhere; font-weight: 600; }
 #save-status[data-state=error] { color: #ffd093; }
@@ -73,4 +72,13 @@ summary { cursor: pointer; }
   .controls button { padding: 10px 12px; }
   .document-list { grid-template-columns: 1fr; }
   .section-heading { align-items: flex-start; }
+}
+
+.library-tools { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; margin-bottom: 16px; }
+.library-tools label { min-width: 0; }
+.document-tags { font-size: .8rem; opacity: .9; }
+.document-actions button { flex: 1 1 auto; }
+.danger { color: #ffd093; }
+@media (max-width: 480px) {
+  .library-tools label:first-child { grid-column: 1 / -1; }
 }

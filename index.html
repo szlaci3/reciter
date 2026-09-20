@@ -6,13 +6,21 @@
   <meta name="theme-color" content="#101614">
   <meta name="color-scheme" content="dark">
   <title>Reciter — Your daily learning, spoken.</title>
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=2">
 </head>
 <body>
   <main>
     <header><span class="eyebrow">LISTENING PROTOTYPE</span><h1>Reciter</h1><p>Your daily learning, spoken.</p></header>
     <section aria-labelledby="library-heading">
       <div class="section-heading"><div><h2 id="library-heading">Your library</h2><p id="document-count" class="hint">Loading documents…</p></div><button id="new-document" disabled>+ New document</button></div>
+      <div class="library-tools">
+        <label for="library-search">Search<input id="library-search" type="search" placeholder="Title, text or topic tag" disabled></label>
+        <label for="library-view">Show<select id="library-view" disabled><option value="library">Documents</option><option value="trash">Trash (0)</option></select></label>
+        <label for="library-sort">Sort by<select id="library-sort" disabled><option value="oldest">Oldest created</option><option value="newest">Newest created</option><option value="updated">Recently updated</option><option value="title">Title A–Z</option></select></label>
+        <label for="library-tag">Topic<select id="library-tag" disabled><option value="">All topics</option></select></label>
+      </div>
+      <p id="library-empty" class="hint" hidden></p>
+      <p id="selection-note" class="hint" hidden>The selected document is outside this view.</p>
       <div id="document-list" class="document-list" aria-label="Saved documents"></div>
       <p class="hint">Saved in this browser on this device. Choose a document to edit or listen.</p>
     </section>
@@ -20,6 +28,15 @@
       <h2 id="material-heading">Your document</h2>
       <label for="document-title">Title</label>
       <input id="document-title" type="text" placeholder="Give this document a title" disabled>
+      <label for="document-tags">Topic tags <span>Separate tags with commas, for example: history, science.</span></label>
+      <input id="document-tags" type="text" placeholder="Add topic tags" disabled>
+      <div class="controls document-actions">
+        <button id="duplicate-document" disabled>Duplicate</button>
+        <button id="trash-document" disabled>Move to Trash</button>
+        <button id="restore-document" hidden disabled>Restore</button>
+        <button id="delete-document" class="danger" hidden disabled>Delete permanently</button>
+      </div>
+      <p id="trash-note" class="hint" hidden>This document is in Trash. Restore it to edit; you can still listen to it.</p>
       <label for="material">Your text <span>Separate topics with a blank line.</span></label>
       <textarea id="material" rows="9" placeholder="Paste your learning material here…" disabled>Welcome to Reciter. Give yourself time to listen, think, and remember.
 
@@ -74,7 +91,7 @@ Choose a short passage you want to learn today. Listen once for the main idea, t
       }
     }, true);
   </script>
-  <script src="dexie.js?v=4.4.6-diag2" data-source-fingerprint="275222:d069eb69"></script><script src="library.js?v=1"></script><script src="library-ui.js?v=diag2"></script>
+  <script src="dexie.js?v=4.4.6-diag2" data-source-fingerprint="275222:d069eb69"></script><script src="library.js?v=2"></script><script src="library-ui.js?v=2"></script>
   <script src="speech.js"></script><script src="edge-speech.js"></script><script src="app.js"></script>
 </body>
 </html>

@@ -126,7 +126,18 @@ def create_app(token, origins=(), communicate=edge_tts.Communicate, list_voices=
         name = request.match_info.get('name', 'index.html')
         if name not in FRONTEND:
             raise web.HTTPNotFound()
-        return web.FileResponse(ROOT / name)
+        # These allowlisted assets are small. Buffer each response independently:
+        # the phone received same-length, altered Dexie source through FileResponse
+        # on the Windows selector-loop server. Avoid its sendfile transport path.
+        path = ROOT / name
+        try:
+            body = await asyncio.to_thread(path.read_bytes)
+        except FileNotFoundError:
+            raise web.HTTPNotFound()
+        content_type = {'.html': 'text/html', '.css': 'text/css',
+                        '.js': 'text/javascript'}.get(path.suffix, 'text/plain')
+        return web.Response(body=body, content_type=content_type,
+                            headers={'X-Reciter-Static': 'buffered-v1'})
 
     async def options(request):
         return web.Response(status=204)
