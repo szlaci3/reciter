@@ -12,7 +12,8 @@ from aiohttp import web
 import edge_tts
 
 ROOT = Path(__file__).resolve().parent
-FRONTEND = ('index.html', 'style.css', 'speech.js', 'edge-speech.js', 'app.js')
+FRONTEND = ('index.html', 'style.css', 'speech.js', 'edge-speech.js', 'app.js',
+            'library.js', 'library-ui.js', 'dexie.min.js', 'dexie.LICENSE')
 
 
 def create_server_loop():

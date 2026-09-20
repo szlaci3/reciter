@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from aiohttp.test_utils import AioHTTPTestCase
-from server import create_app, load_access_key, create_server_loop
+from server import create_app, load_access_key, create_server_loop, FRONTEND
 
 
 class AccessKeyTest(unittest.TestCase):
@@ -65,9 +65,12 @@ class ServiceTest(AioHTTPTestCase):
         response = await self.client.options('/api/speech', headers={'Origin': 'https://reciter.example'})
         self.assertEqual(response.status, 204)
         self.assertEqual(response.headers['Access-Control-Allow-Origin'], 'https://reciter.example')
-        for path in ('/server.py', '/.reciter-token', '/requirements.txt'):
+        for path in ('/server.py', '/.reciter-token', '/requirements.txt', '/library.test.js',
+                     '/package.json', '/node_modules/dexie/dist/dexie.js'):
             self.assertEqual((await self.client.get(path)).status, 404)
         self.assertEqual((await self.client.get('/')).status, 200)
+        for name in FRONTEND:
+            self.assertEqual((await self.client.get('/' + name)).status, 200, name)
 
     async def test_voice_validation_and_audio_cache(self):
         headers = {'Authorization': 'Bearer abcd'}

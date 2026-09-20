@@ -15,6 +15,7 @@
   if (!/^[a-z]{4}$/.test($('pc-key').value)) $('pc-key').value = '';
   let edgeVoice = saved.edgeVoice || 'en-GB-SoniaNeural';
   let connectionGeneration = 0;
+  let libraryLoading = true;
   function edgeConfig() { return { source: $('source').value, url: $('pc-url').value.trim().replace(/\/$/, ''), key: $('pc-key').value.trim(), edgeVoice }; }
   const engine = new EdgeSpeech(synth, edgeConfig, message => { $('connection').textContent = message; }, $('edge-audio'));
   const voiceId = v => `${v.voiceURI}|${v.name}|${v.lang}`;
@@ -24,7 +25,7 @@
   }
   function save() {
     const { pitch, rate, gap } = settings();
-    try { localStorage.setItem(storageKey, JSON.stringify({ text: $('material').value, voice: preferred, pitch, rate, gap,
+    try { localStorage.setItem(storageKey, JSON.stringify({ ...(typeof saved.text === 'string' ? { text: saved.text } : {}), voice: preferred, pitch, rate, gap,
       source: $('source').value, pcUrl: $('pc-url').value.trim(), edgeVoice })); } catch { /* Private browsing may deny storage. */ }
     try { sessionStorage.setItem('reciter-pc-key', $('pc-key').value.trim()); } catch {}
   }
@@ -42,7 +43,7 @@
     if (navigator.mediaSession) navigator.mediaSession.playbackState = active ? 'playing' : player.state === 'paused' ? 'paused' : 'none';
     $('status').textContent = `${labels[player.state]} · ${position}`;
     $('play').textContent = player.state === 'paused' ? 'Resume' : player.state === 'ended' ? 'Replay' : 'Play';
-    $('play').disabled = active || !player.items.length;
+    $('play').disabled = libraryLoading || active || !player.items.length;
     $('pause').disabled = !active;
     $('stop').disabled = player.state === 'idle';
     $('previous').disabled = !player.items.length || player.index === 0;
@@ -68,7 +69,7 @@
     $('passage').replaceChildren(...player.items.map((text, i) => new Option(`${i + 1}. ${text.slice(0, 65)}${text.length > 65 ? '…' : ''}`, String(i))));
     render();
   }
-  $('material').addEventListener('input', () => { textChanged(); save(); });
+  $('material').addEventListener('input', textChanged);
   async function connect() {
     const id = ++connectionGeneration;
     player.stop(); save();
@@ -110,6 +111,7 @@
   $('voice').addEventListener('change', () => { preferred = $('voice').value; save(); $('voice-note').textContent = 'Your selected voice will be used for the next spoken segment.'; });
   for (const key of ['pitch', 'rate', 'gap']) $(key).addEventListener('input', () => { outputs(); save(); });
   function play() {
+    if (libraryLoading) return;
     if (['speaking', 'waiting'].includes(player.state)) return;
     if (player.state !== 'paused') {
       loadVoices(); engine.failed = false;
@@ -138,5 +140,7 @@
   window.addEventListener('pageshow', reconcilePlayback);
   window.addEventListener('pagehide', () => player.stop());
   loadVoices(); textChanged();
+  mountLibrary({ initialText: $('material').value, onTextChanged: textChanged, onSwitch: () => player.stop() })
+    .finally(() => { libraryLoading = false; render(); });
   if ($('pc-url').value && $('pc-key').value) connect();
 })();

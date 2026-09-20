@@ -1,0 +1,16 @@
+{
+  "name": "reciter",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "test": "node --test speech.test.js edge-speech.test.js library.test.js library-ui.test.js",
+    "vendor": "node vendor.cjs"
+  },
+  "dependencies": {
+    "dexie": "4.4.6"
+  },
+  "devDependencies": {
+    "fake-indexeddb": "6.2.5",
+    "jsdom": "26.1.0"
+  }
+}

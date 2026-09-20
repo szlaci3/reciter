@@ -25,7 +25,19 @@ python -m venv .venv
 3. Tap **Connect / retry Edge**, choose an Edge voice, then **Play**. The initial choice is British English Sonia. Ryan, Thomas, Libby, and Maisie were also returned by the live voice-list test.
 4. Choose **Phone voice only** to switch manually. Daniel, British English, is the preferred phone voice at pitch 1.4. If unavailable, the page reports that and lets you choose another browser voice.
 
-Text, address, source, voice selection, and playback settings persist in local browser storage when available. The access key survives reloads in the same tab through session storage; you may need to enter it again in a new session.
+Documents persist in IndexedDB; address, source, voice selection, and playback preferences remain in local storage. The access key survives reloads in the same tab through session storage; you may need to enter it again in a new session.
+
+## Content library — round one
+
+**Restart the PC server after this update, then reload the phone page.** The server now serves the library scripts and bundled Dexie dependency. No Node/npm installation is needed to run the Windows speech service or use the library.
+
+Choose a colored document card to open its title and text in the editor and load it into the existing player. **New document** creates an empty document ready for editing. Titles and text save automatically; wait for **Saved on this device** before closing the page. Editing text or changing documents stops playback and resets the passage. Renaming preserves the current playback position. The last selected document opens again on reload; playback position is not saved across reloads.
+
+Each document has a stable ID, title, text, identity color, creation/modification timestamps, and a revision used to detect conflicting edits from another tab. The twelve dark colors all support white text at a contrast ratio of at least 4.5:1. Colors persist after renaming, editing, and reloading; all palette colors are used before reuse. Cards stay in creation order. Topic tags, search/sorting controls, duplication, Trash/deletion, and database transfer belong to later rounds.
+
+The previous saved text becomes the first document once, without removing its original local-storage copy. If no saved text exists, the initial welcome text becomes the first document. Database saves are serialized; switching documents waits for pending edits to save. Save failures retain the visible draft and block switching, with a **Retry** action. Conflicting edits from another tab are not overwritten silently: copy the draft before reloading. If IndexedDB is unavailable at startup, the previous text remains available for listening, but the page explicitly reports that editing will not be saved.
+
+The library belongs to this browser profile and website origin (scheme, address, and port). It does not sync to another device or follow a move to a different PC address or Netlify. Clearing browser data, browser storage eviction, or ending a private-browsing session can remove it. Export/import is planned for round three; keep original source material elsewhere meanwhile. Hosting the frontend independently and offline page loading are still separate future work.
 
 ## Playback and fallback
 
@@ -66,7 +78,7 @@ Yes: hosting the frontend independently means it can load and use Daniel while t
 python build.py
 ```
 
-Deploy **only `dist/`** as a static site. The build contains only the five frontend assets; no Python server, virtual environment, access key, or tests. No hosting deployment is performed by this implementation.
+Deploy **only `dist/`** as a static site. The build contains the frontend assets, local Dexie bundle, and its license; no Python server, virtual environment, access key, database contents, or tests. No hosting deployment is performed by this implementation.
 
 For Edge speech from that hosted HTTPS site, the PC service also needs a reachable **HTTPS endpoint** (for example, an appropriately configured tunnel or HTTPS reverse proxy). A plain LAN HTTP address is not sufficient for this implementation's hosted-page connection. The endpoint must be reachable from the phone's network. Hosting the frontend does not itself expose the PC service, and the frontend does not discover the PC automatically.
 
@@ -85,11 +97,14 @@ When the PC is off, the hosted website continues with the phone voice. This does
 On Windows the service uses Python's selector event loop to avoid the Proactor socket-cleanup traceback (`ConnectionResetError: WinError 10054`) seen after a remote connection closes. Exceptions are not globally suppressed. Restart the PC service after updating to activate this change.
 
 ```powershell
-node --test speech.test.js edge-speech.test.js
+npm ci
+npm test
 .\.venv\Scripts\python.exe -m unittest test_server -v
 ```
 
 Tests cover passage playback, cancellation races, phone fallback, manual selection, audio completion, mobile playback rejection, authentication, CORS, input validation, restricted static serving, and audio caching. Mocked tests cannot verify voice quality or mobile permissions.
+
+Library tests use Dexie with an in-memory IndexedDB implementation and a simulated DOM to check migration, reopening, save ordering/failure/retry, multi-tab conflicts, identity colors/contrast, safe text rendering, and player integration. Actual phone layout and browser persistence require a device check. `npm run vendor` refreshes the committed `dexie.min.js` and `dexie.LICENSE` from the pinned npm dependency; runtime pages load the local files, not a CDN. Continue building static files with `python build.py`.
 
 Optional live check (sends one generic sample sentence to Microsoft):
 
