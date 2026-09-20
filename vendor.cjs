@@ -2,5 +2,6 @@
 const { copyFileSync } = require('node:fs');
 const { join } = require('node:path');
 const root = __dirname;
-copyFileSync(join(root, 'node_modules/dexie/dist/dexie.min.js'), join(root, 'dexie.min.js'));
+// Use the ES5 distribution: the minified artifact failed to parse on the phone.
+copyFileSync(join(root, 'node_modules/dexie/dist/dexie.js'), join(root, 'dexie.js'));
 copyFileSync(join(root, 'node_modules/dexie/LICENSE'), join(root, 'dexie.LICENSE'));

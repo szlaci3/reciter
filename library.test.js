@@ -1,8 +1,14 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const Dexie = require('./dexie.min.js');
+const Dexie = require('./dexie.js');
 const { indexedDB, IDBKeyRange } = require('fake-indexeddb');
 const { COLORS, LibraryStore, LibraryEditor } = require('./library.js');
+
+test('the shipped Dexie bundle parses using ES5 syntax', () => {
+  const { parse } = require('acorn');
+  const { readFileSync } = require('node:fs');
+  parse(readFileSync(require.resolve('./dexie.js'), 'utf8'), { ecmaVersion: 5 });
+});
 
 function store(t, name = 'test-' + crypto.randomUUID()) {
   const result = new LibraryStore(Dexie, name, { indexedDB, IDBKeyRange });

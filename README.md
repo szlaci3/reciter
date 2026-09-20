@@ -12,6 +12,8 @@ From this folder in PowerShell:
 .\start.ps1
 ```
 
+Stop the server with **Ctrl+C**. On Windows, an idle-loop wake-up checks for console interrupts every 250 ms; shutdown allows active requests up to 3 seconds to finish. If Ctrl+C appears unresponsive, press **Esc** first to exit terminal text selection, then try again. An older, already-running server needs to be stopped once (close its dedicated terminal window if necessary) and relaunched to use this fix.
+
 The launcher installs dependencies into `.venv` if needed and starts the server on port 8000. Keep the terminal open. If script execution is restricted, run the equivalent commands individually:
 
 ```powershell
@@ -104,7 +106,7 @@ npm test
 
 Tests cover passage playback, cancellation races, phone fallback, manual selection, audio completion, mobile playback rejection, authentication, CORS, input validation, restricted static serving, and audio caching. Mocked tests cannot verify voice quality or mobile permissions.
 
-Library tests use Dexie with an in-memory IndexedDB implementation and a simulated DOM to check migration, reopening, save ordering/failure/retry, multi-tab conflicts, identity colors/contrast, safe text rendering, and player integration. Actual phone layout and browser persistence require a device check. `npm run vendor` refreshes the committed `dexie.min.js` and `dexie.LICENSE` from the pinned npm dependency; runtime pages load the local files, not a CDN. Continue building static files with `python build.py`.
+Library tests use Dexie with an in-memory IndexedDB implementation and a simulated DOM to check migration, reopening, save ordering/failure/retry, multi-tab conflicts, identity colors/contrast, safe text rendering, and player integration. Actual phone layout and browser persistence require a device check. `npm run vendor` refreshes the committed unminified `dexie.js` and `dexie.LICENSE` from the pinned npm dependency; runtime pages load the local files, not a CDN. The minified bundle downloaded successfully on the user's phone but failed with `SyntaxError: Unexpected token ')'`; the replacement is checked against ES5 syntax. Restart the PC server after this replacement so it serves the new filename. No database reset is needed. Continue building static files with `python build.py`.
 
 Optional live check (sends one generic sample sentence to Microsoft):
 

@@ -23,7 +23,7 @@ async function page(t, { legacy = 'Legacy title.\n\nLegacy second passage.', bef
   w.HTMLMediaElement.prototype.pause = function () {};
   w.HTMLMediaElement.prototype.play = async function () {};
   w.localStorage.setItem('reciter-listening-v1', JSON.stringify({ text: legacy, source: 'browser' }));
-  for (const name of ['dexie.min.js', 'library.js', 'library-ui.js', 'speech.js', 'edge-speech.js']) w.eval(source(name));
+  for (const name of ['dexie.js', 'library.js', 'library-ui.js', 'speech.js', 'edge-speech.js']) w.eval(source(name));
   const instances = [];
   const Store = w.ReciterLibrary.LibraryStore;
   w.ReciterLibrary.LibraryStore = class extends Store { constructor(...args) { super(...args); instances.push(this); } };
@@ -31,7 +31,7 @@ async function page(t, { legacy = 'Legacy title.\n\nLegacy second passage.', bef
   w.eval(source('app.js'));
   t.after(() => { instances.forEach(s => s.db.close()); w.close(); });
   const $ = id => w.document.getElementById(id);
-  await until(() => /Saved on this device|storage is unavailable/.test($('save-status').textContent));
+  await until(() => /Saved on this device|Library could not start/.test($('save-status').textContent));
   const edit = (id, text) => { $(id).value = text; $(id).dispatchEvent(new w.Event('input', { bubbles: true })); };
   const saved = () => until(() => $('save-status').textContent === 'Saved on this device');
   return { w, $, edit, saved, spoken, store: instances[0], canceled: () => canceled };
@@ -90,6 +90,7 @@ test('blocked storage preserves the old text for listening and does not claim it
     w.ReciterLibrary.LibraryStore.prototype.initialize = async () => { throw new Error('Storage blocked'); };
   } });
   assert.match(p.$('save-status').textContent, /will not be saved/);
+  assert.match(p.$('save-status').textContent, /opening browser storage.*Error: Storage blocked/);
   assert.equal(p.$('material').disabled, false); assert.equal(p.$('new-document').disabled, true);
   assert.equal(p.$('material').value, 'Legacy title.\n\nLegacy second passage.');
   p.$('play').click(); assert.equal(p.spoken.at(-1).text, 'Legacy title.');
@@ -115,4 +116,38 @@ test('Retry repeats a failed document creation without losing the selected docum
   await until(() => p.$('document-count').textContent === '2 documents');
   assert.equal(p.$('document-title').value, 'Untitled document');
   assert.equal(p.$('material').value, '');
+});
+
+test('missing Dexie is identified as a script failure, not a blocked database', async t => {
+  const p = await page(t, { beforeApp(w) {
+    w.Dexie = undefined;
+    w.fetch = async () => ({ status: 404, headers: { get: () => 'text/plain' } });
+  } });
+  assert.match(p.$('save-status').textContent, /loading library scripts.*dexie.js: HTTP 404/);
+  assert.equal(p.$('material').value, 'Legacy title.\n\nLegacy second passage.');
+  assert.equal(p.$('new-document').disabled, true);
+  assert.equal(p.$('autosave-note').hidden, true);
+});
+
+test('startup errors display the actual browser error without removing persisted documents', async t => {
+  const p = await page(t, { beforeApp(w) {
+    const initialize = w.ReciterLibrary.LibraryStore.prototype.initialize;
+    w.ReciterLibrary.LibraryStore.prototype.initialize = async function (text) {
+      await initialize.call(this, text);
+      throw new w.DOMException('Browser storage connection failed.', 'UnknownError');
+    };
+  } });
+  assert.match(p.$('save-status').textContent, /UnknownError: Browser storage connection failed/);
+  assert.equal((await p.store.list()).length, 1);
+  assert.equal((await p.store.list())[0].text, 'Legacy title.\n\nLegacy second passage.');
+});
+
+test('dependency diagnostics distinguish a served script that failed to execute', async t => {
+  const p = await page(t, { beforeApp(w) {
+    w.Dexie = undefined;
+    w.reciterScriptErrors = { 'dexie.js': 'SecurityError: Example browser restriction' };
+    w.fetch = async () => ({ status: 200, headers: { get: () => 'text/javascript' } });
+  } });
+  assert.match(p.$('save-status').textContent, /dexie.js: HTTP 200, text\/javascript; SecurityError/);
+  assert.equal(p.$('material').disabled, false);
 });

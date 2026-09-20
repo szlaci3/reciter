@@ -4,7 +4,9 @@
     const $ = id => document.getElementById(id);
     const title = $('document-title'), material = $('material'), status = $('save-status');
     let ready = false, displayedId = null, renderedCards = '', failedNavigation = null;
+    let startupStep = 'loading library scripts';
     function render(editor) {
+      if (!ready) startupStep = 'displaying the library';
       const active = editor.active;
       if (active?.id !== displayedId) {
         displayedId = active.id;
@@ -49,13 +51,41 @@
     }
     let editor;
     try {
-      editor = new ReciterLibrary.LibraryEditor(new ReciterLibrary.LibraryStore(root.Dexie), render);
+      const missing = [];
+      if (typeof root.Dexie !== 'function') missing.push('dexie.js');
+      if (!root.ReciterLibrary) missing.push('library.js');
+      if (missing.length) {
+        const details = await Promise.all(missing.map(async name => {
+          const failure = root.reciterScriptErrors?.[name];
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 5000);
+          try {
+            const response = await fetch(name + '?check=1', { cache: 'no-store', signal: controller.signal });
+            const type = response.headers?.get('content-type') || 'unknown content type';
+            await response.body?.cancel();
+            return `${name}: HTTP ${response.status}, ${type}${failure ? '; ' + failure : '; script did not initialize'}`;
+          } catch (error) {
+            return `${name}: ${failure || 'script unavailable'}; fetch check: ${error.message}`;
+          } finally { clearTimeout(timeout); }
+        }));
+        throw new Error('Required script missing: ' + details.join(' | ') + '.');
+      }
+      startupStep = 'opening browser storage';
+      if (!root.indexedDB) throw new Error('IndexedDB is not available in this browser.');
+      editor = new root.ReciterLibrary.LibraryEditor(new root.ReciterLibrary.LibraryStore(root.Dexie), render);
       await editor.initialize(initialText);
       ready = true; render(editor);
-    } catch {
-      status.textContent = 'Library storage is unavailable. Your text is still here for listening; changes will not be saved. Copy it before leaving and reload to retry.';
+    } catch (error) {
+      const detail = `${error?.name || 'Error'}: ${error?.message || String(error)}`;
+      status.textContent = `Library could not start (${startupStep}). ${detail} Your text is still here for listening; changes will not be saved. Copy it before leaving and reload to retry.`;
       status.dataset.state = 'error';
+      $('document-count').textContent = 'Library unavailable';
+      $('new-document').disabled = title.disabled = true;
+      $('retry-save').hidden = true;
+      if ($('autosave-note')) $('autosave-note').hidden = true;
+      $('document-list').replaceChildren();
       material.disabled = false;
+      console.error('Reciter library startup failed at ' + startupStep, error);
       return;
     }
     async function switchDocument(id) {

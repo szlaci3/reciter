@@ -1,10 +1,11 @@
 import unittest
 import asyncio
 import sys
+from unittest.mock import AsyncMock, patch
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from aiohttp.test_utils import AioHTTPTestCase
-from server import create_app, load_access_key, create_server_loop, FRONTEND
+from server import create_app, load_access_key, create_server_loop, console_wakeup, FRONTEND
 
 
 class AccessKeyTest(unittest.TestCase):
@@ -17,6 +18,37 @@ class AccessKeyTest(unittest.TestCase):
                 token = load_access_key(path)
                 self.assertRegex(token, r'^[a-z]{4}$')
                 self.assertEqual(load_access_key(path), token)
+
+
+class ConsoleWakeupTest(unittest.IsolatedAsyncioTestCase):
+    async def test_wakeup_interval_and_cancellation_on_cleanup(self):
+        before = asyncio.all_tasks()
+        context = console_wakeup(None)
+        await anext(context)
+        created = asyncio.all_tasks() - before
+        self.assertEqual(len(created), 1)
+        task = created.pop()
+        with patch('server.asyncio.sleep', new_callable=AsyncMock) as sleep:
+            # A blocked sleep lets us inspect the scheduled interval, then
+            # cleanup must cancel that wait without leaving a background task.
+            gate = asyncio.Event()
+            started = asyncio.Event()
+
+            async def wait(delay):
+                started.set()
+                await gate.wait()
+
+            sleep.side_effect = wait
+            await asyncio.wait_for(started.wait(), timeout=1)
+            sleep.assert_awaited_once_with(0.25)
+            await context.aclose()
+        self.assertTrue(task.cancelled())
+
+    async def test_wakeup_is_installed_only_on_windows(self):
+        for platform in ('win32', 'linux'):
+            with patch('server.sys.platform', platform):
+                app = create_app('test')
+            self.assertEqual(console_wakeup in app.cleanup_ctx, platform == 'win32')
 
 
 class ServiceTest(AioHTTPTestCase):
@@ -71,6 +103,10 @@ class ServiceTest(AioHTTPTestCase):
         self.assertEqual((await self.client.get('/')).status, 200)
         for name in FRONTEND:
             self.assertEqual((await self.client.get('/' + name)).status, 200, name)
+        for path in ('/dexie.js?v=4.4.6', '/library.js?v=1'):
+            response = await self.client.get(path)
+            self.assertEqual(response.status, 200)
+            self.assertIn('javascript', response.headers['Content-Type'])
 
     async def test_voice_validation_and_audio_cache(self):
         headers = {'Authorization': 'Bearer abcd'}

@@ -26,7 +26,7 @@
 Choose a short passage you want to learn today. Listen once for the main idea, then again for the details.</textarea>
       <p id="save-status" class="hint" role="status" aria-live="polite">Opening your library…</p>
       <button id="retry-save" hidden>Retry</button>
-      <p class="hint">Changes save automatically. Editing text stops playback; renaming keeps your place.</p>
+      <p id="autosave-note" class="hint">Changes save automatically. Editing text stops playback; renaming keeps your place.</p>
     </section>
     <section aria-labelledby="voice-heading">
       <h2 id="voice-heading">Make it comfortable</h2>
@@ -60,7 +60,18 @@ Choose a short passage you want to learn today. Listen once for the main idea, t
     <footer>Edge speech sends text to Microsoft through your PC. Phone speech uses your browser’s voices. No paid speech API is configured.</footer>
   </main>
   <audio id="edge-audio" preload="auto"></audio>
-  <script src="dexie.min.js"></script><script src="library.js"></script><script src="library-ui.js"></script>
+  <script>
+    // Capture dependency load/evaluation errors before the library starts.
+    window.reciterScriptErrors = {};
+    window.addEventListener('error', function (event) {
+      var source = event.filename || (event.target && event.target.src) || '';
+      var name = source.split('/').pop().split('?')[0];
+      if (name === 'dexie.js' || name === 'library.js') {
+        window.reciterScriptErrors[name] = event.message || 'The browser could not load this script.';
+      }
+    }, true);
+  </script>
+  <script src="dexie.js?v=4.4.6"></script><script src="library.js?v=1"></script><script src="library-ui.js"></script>
   <script src="speech.js"></script><script src="edge-speech.js"></script><script src="app.js"></script>
 </body>
 </html>

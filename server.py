@@ -2,6 +2,7 @@
 import argparse
 import asyncio
 from collections import OrderedDict
+from contextlib import suppress
 import math
 from pathlib import Path
 import secrets
@@ -13,7 +14,7 @@ import edge_tts
 
 ROOT = Path(__file__).resolve().parent
 FRONTEND = ('index.html', 'style.css', 'speech.js', 'edge-speech.js', 'app.js',
-            'library.js', 'library-ui.js', 'dexie.min.js', 'dexie.LICENSE')
+            'library.js', 'library-ui.js', 'dexie.js', 'dexie.LICENSE')
 
 
 def create_server_loop():
@@ -24,6 +25,21 @@ def create_server_loop():
     if sys.platform == 'win32':
         return asyncio.SelectorEventLoop()
     return asyncio.new_event_loop()
+
+
+async def console_wakeup(app):
+    """Let Windows process Ctrl+C even when the selector has no socket events."""
+    async def tick():
+        while True:
+            await asyncio.sleep(0.25)
+
+    task = asyncio.create_task(tick())
+    try:
+        yield
+    finally:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
 
 
 def load_access_key(path):
@@ -116,6 +132,8 @@ def create_app(token, origins=(), communicate=edge_tts.Communicate, list_voices=
         return web.Response(status=204)
 
     app = web.Application(middlewares=[access], client_max_size=16384)
+    if sys.platform == 'win32':
+        app.cleanup_ctx.append(console_wakeup)
     app.router.add_get('/api/voices', voices)
     app.router.add_post('/api/speech', speech)
     app.router.add_route('OPTIONS', '/api/{name}', options)
@@ -134,5 +152,6 @@ if __name__ == '__main__':
     token = load_access_key(token_file)
     print(f'PC access key (paste into Reciter): {token}')
     print('Open http://<PC-LAN-IP>:' + str(args.port) + ' on your phone, on the same Wi-Fi.')
+    print('Press Ctrl+C to stop (active requests get up to 3 seconds to finish).')
     web.run_app(create_app(token, args.origin), host=args.host, port=args.port,
-                access_log=None, loop=create_server_loop())
+                access_log=None, loop=create_server_loop(), shutdown_timeout=3)
