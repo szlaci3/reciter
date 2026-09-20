@@ -14,9 +14,8 @@
   try { $('pc-key').value = sessionStorage.getItem('reciter-pc-key') || ''; } catch {}
   if (!/^[a-z]{4}$/.test($('pc-key').value)) $('pc-key').value = '';
   let edgeVoice = saved.edgeVoice || 'en-GB-SoniaNeural';
-  let connectionGeneration = 0;
   let libraryLoading = true;
-  function edgeConfig() { return { source: $('source').value, url: $('pc-url').value.trim().replace(/\/$/, ''), key: $('pc-key').value.trim(), edgeVoice }; }
+  function edgeConfig() { return { warmup: true, source: $('source').value, url: $('pc-url').value.trim().replace(/\/$/, ''), key: $('pc-key').value.trim(), edgeVoice }; }
   const engine = new EdgeSpeech(synth, edgeConfig, message => { $('connection').textContent = message; }, $('edge-audio'));
   const voiceId = v => `${v.voiceURI}|${v.name}|${v.lang}`;
   function settings() {
@@ -70,41 +69,25 @@
     render();
   }
   $('material').addEventListener('input', textChanged);
-  async function connect() {
-    const id = ++connectionGeneration;
-    player.stop(); save();
-    const c = edgeConfig();
-    $('connection').textContent = 'Connecting to PC…';
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 12000);
-    try {
-      const address = new URL(c.url);
-      if (!['http:', 'https:'].includes(address.protocol)) throw new Error('Use an HTTP or HTTPS address.');
-      if (location.protocol === 'https:' && address.protocol !== 'https:') throw new Error('Use an HTTPS PC address with this hosted page.');
-      if (!/^[a-z]{4}$/.test(c.key)) throw new Error('Enter the four lowercase letters shown on your PC.');
-      const response = await fetch(c.url + '/api/voices', { signal: controller.signal, headers: { Authorization: 'Bearer ' + c.key } });
-      if (response.status === 401) throw new Error('Access key did not match. Restart the PC service and enter the four letters it displays.');
-      if (response.status === 502) throw new Error('PC connected, but Microsoft’s voice service could not be reached.');
-      if (!response.ok) throw new Error('Connection failed (' + response.status + '). Check address and allowed website origin.');
-      const list = await response.json();
-      if (!Array.isArray(list) || !list.length) throw new Error('No Edge voices returned.');
-      if (id !== connectionGeneration) return;
-      list.sort((a, b) => Number(!a.locale.startsWith('en-GB')) - Number(!b.locale.startsWith('en-GB')) || a.name.localeCompare(b.name));
-      $('edge-voice').replaceChildren(...list.map(v => new Option(`${v.name} · ${v.gender}`, v.name)));
-      if (!list.some(v => v.name === edgeVoice)) edgeVoice = list[0].name;
-      $('edge-voice').value = edgeVoice;
-      engine.failed = false; save();
-      $('connection').textContent = 'PC connected. Edge voices ready; press Play to listen.';
-    } catch (error) {
-      if (id !== connectionGeneration) return;
-      engine.failed = true;
-      $('connection').textContent = (error.name === 'AbortError' ? 'PC connection timed out.' : error.message) + ' Phone fallback is available.';
-    } finally { clearTimeout(timeout); }
+  engine.onVoices = list => {
+    list.sort((a, b) => Number(!a.locale.startsWith('en-GB')) - Number(!b.locale.startsWith('en-GB')) || a.name.localeCompare(b.name));
+    $('edge-voice').replaceChildren(...list.map(v => new Option(`${v.name} · ${v.gender}`, v.name)));
+    if (!list.some(v => v.name === edgeVoice)) edgeVoice = list[0].name;
+    $('edge-voice').value = edgeVoice;
+    save();
+  };
+  function connect() {
+    save();
+    if ($('source').value === 'browser') {
+      $('connection').textContent = 'Phone voice selected. Choose Automatic to connect to Edge.';
+      return;
+    }
+    engine.connect();
   }
   $('connect').addEventListener('click', connect);
   for (const id of ['pc-url', 'pc-key']) $(id).addEventListener('input', () => {
     if (id === 'pc-key') $('pc-key').value = $('pc-key').value.toLowerCase().replace(/[^a-z]/g, '').slice(0, 4);
-    connectionGeneration++; player.stop(); engine.failed = true; save();
+    player.stop(); engine.readyKey = null; engine.failed = true; save();
   });
   $('source').addEventListener('change', () => { player.stop(); engine.failed = false; save(); $('connection').textContent = 'Source changed. Press Play to listen.'; });
   $('edge-voice').addEventListener('change', () => { edgeVoice = $('edge-voice').value; save(); });
@@ -114,7 +97,7 @@
     if (libraryLoading) return;
     if (['speaking', 'waiting'].includes(player.state)) return;
     if (player.state !== 'paused') {
-      loadVoices(); engine.failed = false;
+      loadVoices();
       if ($('source').value === 'auto') engine.unlock();
     }
     player.play();
@@ -142,5 +125,5 @@
   loadVoices(); textChanged();
   mountLibrary({ initialText: $('material').value, onTextChanged: textChanged, onSwitch: () => player.stop() })
     .finally(() => { libraryLoading = false; render(); });
-  if ($('pc-url').value && $('pc-key').value) connect();
+  if ($('source').value === 'auto' && $('pc-url').value && $('pc-key').value) connect();
 })();

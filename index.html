@@ -70,8 +70,9 @@ Choose a short passage you want to learn today. Listen once for the main idea, t
     </section>
     <section aria-labelledby="voice-heading">
       <h2 id="voice-heading">Make it comfortable</h2>
-      <label for="source">Speech source</label><select id="source"><option value="auto">Edge on PC · automatic phone fallback</option><option value="browser">Phone voice only</option></select>
+      <label for="source">Speech source</label><select id="source"><option value="auto">Edge · automatic phone fallback</option><option value="browser">Phone voice only</option></select>
       <p id="connection" class="hint" role="status">Connect your PC to load Edge voices, or use the phone voice.</p>
+      <p class="hint">Automatic mode uses your phone voice while the service wakes, then switches after a spoken segment when Edge audio is ready. If your phone asks, tap Play to allow Edge audio.</p>
       <details><summary>PC connection</summary>
         <label for="pc-url">PC service address</label><input id="pc-url" type="url" placeholder="http://192.168.1.10:8000" autocomplete="off">
         <label for="pc-key">PC access key · four lowercase letters</label><input id="pc-key" type="text" maxlength="4" pattern="[a-z]{4}" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="off" placeholder="abcd">

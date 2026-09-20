@@ -37,6 +37,33 @@ async function page(t, { legacy = 'Legacy title.\n\nLegacy second passage.', bef
   return { w, $, edit, saved, spoken, store: instances[0], canceled: () => canceled };
 }
 
+test('Automatic Play speaks while connecting; Connect preserves playback and Phone only cancels the wake', async t => {
+  const requests = [];
+  const p = await page(t, { beforeApp(w) {
+    w.fetch = (url, options) => new Promise(resolve => requests.push({ url, options, resolve }));
+  } });
+  p.edit('pc-url', 'http://speech.test'); p.edit('pc-key', 'test');
+  p.$('source').value = 'auto'; p.$('source').dispatchEvent(new p.w.Event('change'));
+  p.$('play').click();
+  assert.equal(p.spoken.length, 1); assert.match(p.$('connection').textContent, /waking/);
+  assert.match(requests[0].url, /api\/voices$/);
+  const canceled = p.canceled();
+  p.$('connect').click();
+  assert.equal(p.canceled(), canceled); assert.equal(p.spoken.length, 1);
+  assert.equal(requests[0].options.signal.aborted, true);
+  p.$('source').value = 'browser'; p.$('source').dispatchEvent(new p.w.Event('change'));
+  assert.equal(requests[1].options.signal.aborted, true);
+  const status = p.$('connection').textContent;
+  for (const request of requests) request.resolve({ ok: true, json: async () => [
+    { name: 'en-GB-SoniaNeural', locale: 'en-GB', gender: 'Female' }
+  ] });
+  await new Promise(setImmediate);
+  assert.equal(p.$('connection').textContent, status);
+  assert.equal(p.$('edge-voice').options.length, 1);
+  p.$('connect').click(); p.$('play').click();
+  assert.equal(requests.length, 2); assert.equal(p.spoken.length, 2);
+});
+
 test('library UI migrates text, creates and switches documents, and saves persistent identity', async t => {
   const p = await page(t);
   assert.equal(p.$('material').value, 'Legacy title.\n\nLegacy second passage.');

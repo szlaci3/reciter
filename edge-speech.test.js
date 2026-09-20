@@ -207,6 +207,135 @@ const tick = () => new Promise(setImmediate);
 const okAudio = () => ({ ok: true, blob: async () => new Blob(['audio']) });
 const nextUtterance = f => ({ ...f.utterance, text: 'The next chunk.' });
 
+function warmFixture() {
+  const requests = [], pending = new Map(); let id = 0;
+  const timers = {
+    setTimeout(fn, delay) { pending.set(++id, { fn, delay }); return id; },
+    clearTimeout(key) { pending.delete(key); }
+  };
+  const f = fixture((url, options) => new Promise((resolve, reject) => {
+    requests.push({ url, options, resolve, reject });
+    options.signal.addEventListener('abort', () => reject(Object.assign(new Error('Timed out'), { name: 'AbortError' })));
+  }), timers);
+  f.config.warmup = true;
+  const { Player } = require('./speech.js');
+  const player = new Player(f.engine, text => ({ text }), () => ({ rate: 1, pitch: 1.4, voice: { name: 'Daniel' }, gap: 0 }), () => {});
+  player.setText('A sentence explaining the subject in some detail. '.repeat(24).trim() + '\n\nFinal passage.');
+  const fire = async delay => {
+    const entry = [...pending].find(([, timer]) => timer.delay === delay);
+    assert.ok(entry, 'Expected pending timer: ' + delay);
+    pending.delete(entry[0]); entry[1].fn(); await tick();
+  };
+  return { ...f, requests, pending, player, fire };
+}
+const okVoices = () => ({ ok: true, json: async () => [{ name: 'en-GB-SoniaNeural', locale: 'en-GB', gender: 'Female' }] });
+
+test('Daniel starts immediately while waking; Edge takes over at the next unread segment without loss', async () => {
+  const f = warmFixture();
+  f.player.play();
+  assert.equal(f.spoken.length, 1); assert.match(f.requests[0].url, /api\/voices$/);
+  assert.equal(f.engine.mode, 'browser');
+  const expected = [...f.player.parts, 'Final passage.'];
+  const heard = [f.spoken[0].text];
+  f.requests[0].resolve(okVoices()); await tick();
+  assert.equal(f.engine.mode, 'browser'); assert.equal(f.audio.paused, true);
+  assert.equal(JSON.parse(f.requests[1].options.body).text, expected[1]);
+  f.requests[1].resolve(okAudio()); await tick();
+  f.spoken[0].onend(); await tick();
+  assert.equal(f.engine.mode, 'edge'); assert.equal(f.spoken.length, 1);
+  while (f.player.state !== 'ended') {
+    heard.push(f.player.utterance.text);
+    f.requests.at(-1).resolve(okAudio()); await tick();
+    f.audio.onended(); await tick();
+  }
+  assert.deepEqual(heard, expected);
+  assert.equal(f.pending.size, 0); f.player.stop();
+});
+
+test('slow recovery audio never delays Daniel and cannot play an already spoken segment', async () => {
+  const f = warmFixture(); f.player.play();
+  f.requests[0].resolve(okVoices()); await tick();
+  const obsolete = f.requests[1];
+  f.spoken[0].onend();
+  assert.equal(f.spoken.length, 2); assert.equal(f.engine.mode, 'browser');
+  assert.equal(obsolete.options.signal.aborted, true);
+  obsolete.resolve(okAudio()); await tick();
+  f.requests[2].resolve(okAudio()); await tick();
+  f.spoken[1].onend(); await tick();
+  assert.equal(f.engine.mode, 'edge'); assert.equal(f.player.part, 2);
+  f.player.stop();
+});
+
+test('warm-up has six bounded attempts and stays on Daniel after exhaustion', async () => {
+  const f = warmFixture(); f.player.play();
+  for (let i = 0; i < 6; i++) {
+    assert.equal(f.requests.length, i + 1);
+    await f.fire(12000);
+    assert.equal(f.engine.mode, 'browser');
+    if (i < 5) await f.fire(3000);
+  }
+  assert.equal(f.pending.size, 0); assert.equal(f.engine.connection, null);
+  f.spoken[0].onend(); await tick();
+  assert.equal(f.requests.length, 6); assert.equal(f.spoken.length, 2);
+  f.player.stop();
+});
+
+test('Stop, navigation and source changes invalidate a late voice catalogue', async () => {
+  for (const action of ['stop', 'navigate', 'source']) {
+    const f = warmFixture(); let catalogues = 0;
+    f.engine.onVoices = () => catalogues++;
+    f.player.play(); const old = f.requests[0];
+    if (action === 'navigate') f.player.select(1);
+    else {
+      if (action === 'source') f.config.source = 'browser';
+      f.player.stop();
+    }
+    old.resolve(okVoices()); await tick();
+    assert.equal(catalogues, 0); assert.equal(old.options.signal.aborted, true);
+    assert.equal(f.audio.paused, true); f.player.stop();
+    assert.equal(f.pending.size, 0);
+  }
+});
+
+test('Stop during retry delay cancels all further connection attempts', async () => {
+  const f = warmFixture(); f.player.play();
+  f.requests[0].resolve({ ok: false, status: 503 }); await tick();
+  assert.equal([...f.pending.values()][0].delay, 3000);
+  f.player.stop(); await tick();
+  assert.equal(f.pending.size, 0); assert.equal(f.requests.length, 1);
+});
+
+test('authentication errors and malformed catalogues end warm-up without retries', async () => {
+  for (const response of [{ ok: false, status: 401 }, { ok: false, status: 403 },
+    { ok: true, json: async () => [{ name: 'broken' }] }]) {
+    const f = warmFixture(); f.player.play();
+    f.requests[0].resolve(response); await tick();
+    assert.equal(f.pending.size, 0); assert.equal(f.engine.failed, true);
+    assert.equal(f.spoken.length, 1); f.player.stop();
+  }
+});
+
+test('paused Daniel stays paused when Edge becomes ready', async () => {
+  const f = warmFixture();
+  f.engine.native.pause = () => {}; f.engine.native.resume = () => {};
+  f.player.play(); f.player.pause();
+  f.requests[0].resolve(okVoices()); await tick();
+  f.requests[1].resolve(okAudio()); await tick();
+  assert.equal(f.player.state, 'paused'); assert.equal(f.audio.paused, true);
+  f.player.play(); assert.equal(f.engine.mode, 'browser');
+  f.spoken[0].onend(); await tick(); assert.equal(f.engine.mode, 'edge');
+  f.player.stop();
+});
+
+test('Phone voice only never initiates warm-up and completion cancels a pending wake', async () => {
+  const f = warmFixture(); f.config.source = 'browser'; f.player.play();
+  assert.equal(f.requests.length, 0); f.player.stop();
+  f.config.source = 'auto'; f.player.setText('A short passage.'); f.player.play();
+  f.spoken.at(-1).onend(); await tick();
+  assert.equal(f.player.state, 'ended'); assert.equal(f.requests[0].options.signal.aborted, true);
+  assert.equal(f.pending.size, 0); f.player.stop();
+});
+
 test('next audio is fetched during playback and reused without a boundary request', async () => {
   const requests = [];
   const f = fixture((_, options) => new Promise(resolve => {

@@ -110,7 +110,7 @@
         this.utterance = null;
         if (++this.part < parts.length) { this.speak(); return; }
         this.part = 0;
-        if (this.index + 1 >= this.items.length) { this.state = 'ended'; this.update(); return; }
+        if (this.index + 1 >= this.items.length) { this.synth.finishSession?.(); this.state = 'ended'; this.update(); return; }
         this.index++; this.state = 'waiting'; this.update();
         const gap = this.settings().gap * 1000;
         // A zero-length break needs no background timer between recordings.
