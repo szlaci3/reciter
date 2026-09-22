@@ -193,6 +193,7 @@
       if (downloadUrl) URL.revokeObjectURL(downloadUrl);
       downloadUrl = URL.createObjectURL(new Blob([JSON.stringify(data)], { type: 'application/json' }));
       const previous = $('download-progress'), link = previous.cloneNode(false);
+      link.textContent = 'Save progress file';
       link.href = downloadUrl; link.download = 'reciter-progress-' + new Date().toISOString().slice(0, 10) + '.json'; link.hidden = false; previous.replaceWith(link);
       message('Tap Save progress file, then give it to Codex when preparing your next package.');
     });
