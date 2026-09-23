@@ -115,6 +115,7 @@
       // changing engines cannot reinterpret the current part index.
       const split = text => this.synth.segmentText?.(text) ?? segments(text);
       if (this.part === 0) {
+        this.synth.beginPassage?.();
         const start = this.resumeOffset || 0;
         this.parts = split(this.items[this.index].slice(start));
         let cursor = start;

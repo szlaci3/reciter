@@ -27,6 +27,16 @@
         ? parsing.segments(text) : parsing.edgeSegments(text);
     }
     connectionKey(c) { return JSON.stringify([c.url, c.key]); }
+    beginPassage() {
+      this.beginSession();
+      if (this.config().source === 'browser' || this.connection || !this.failed) return;
+      // Retry the selected voice on the first unread chunk of each passage.
+      // Keep failures latched within a passage and leave active warm-up alone.
+      this.discardPrepared();
+      this.browserNext = null;
+      this.failed = false;
+      this.recovering = false;
+    }
     beginSession() {
       const c = this.config();
       if (!c.warmup || c.source === 'browser' || this.sessionStarted) return;

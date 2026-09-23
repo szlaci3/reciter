@@ -230,6 +230,76 @@ function warmFixture() {
 }
 const okVoices = () => ({ ok: true, json: async () => [{ name: 'en-GB-SoniaNeural', locale: 'en-GB', gender: 'Female' }] });
 
+test('after Edge fails, each new passage retries the selected voice without losing text', async () => {
+  const { Player, edgeSegments } = require('./speech.js');
+  for (const failure of ['network', '502', 'media']) {
+    const requests = [];
+    let available = false;
+    const f = fixture(async (_, options) => {
+      requests.push(JSON.parse(options.body));
+      if (!available && failure === 'network') throw new Error('Offline');
+      if (!available && failure === '502') return { ok: false, status: 502 };
+      return okAudio();
+    });
+    f.config.warmup = true;
+    f.engine.readyKey = f.engine.connectionKey(f.config); f.engine.readyAt = Date.now();
+    const paragraph = 'A sentence that must be read exactly once and in order. '.repeat(15).trim();
+    const expected = edgeSegments(paragraph);
+    const player = new Player(f.engine, text => ({ text }), () => ({ rate: 1, gap: 0 }), () => {});
+    player.setText(paragraph + '\n\n' + paragraph + '\n\nRecovered passage.');
+    player.play(); await tick();
+    for (let passage = 0; passage < 2; passage++) {
+      if (failure === 'media') f.audio.onerror();
+      const calls = requests.length;
+      for (let part = 0; part < expected.length; part++) {
+        assert.equal(player.index, passage); assert.equal(player.part, part);
+        assert.equal(f.spoken.at(-1).text, expected[part]);
+        assert.equal(requests.length, calls, 'No retries within the failed passage');
+        if (passage === 1 && part === expected.length - 1) available = true;
+        f.spoken.at(-1).onend(); await tick();
+      }
+      assert.ok(requests.length > calls, 'The next passage retries Edge');
+    }
+    assert.equal(f.engine.mode, 'edge'); assert.equal(player.utterance.text, 'Recovered passage.');
+    assert.equal(requests.at(-1).voice, f.config.edgeVoice);
+    assert.deepEqual(f.spoken.map(u => u.text), [...expected, ...expected]);
+    f.audio.onended(); assert.equal(player.state, 'ended'); player.stop();
+  }
+});
+
+test('passage retry respects the break, pause, and cancellation of a pending request', async () => {
+  const f = warmFixture();
+  f.engine.readyKey = f.engine.connectionKey(f.config); f.engine.readyAt = Date.now();
+  let resumeBreak;
+  f.player.timers = { setTimeout(fn) { resumeBreak = fn; return 1; }, clearTimeout() {} };
+  f.player.settings = () => ({ rate: 1, gap: 2 });
+  f.player.setText('First passage.\n\nSecond passage.'); f.player.play();
+  f.requests[0].reject(new Error('Offline')); await tick();
+  f.spoken[0].onend();
+  assert.equal(f.player.state, 'waiting'); assert.equal(f.requests.length, 1);
+  f.player.pause(); resumeBreak();
+  assert.equal(f.requests.length, 1); assert.equal(f.player.state, 'paused');
+  f.player.play();
+  // Resume starts a fresh warm-up, still canceled by Stop.
+  assert.equal(f.requests.length, 2);
+  f.player.stop(); f.requests[1].resolve(okVoices()); await tick();
+  assert.equal(f.requests[1].options.signal.aborted, true);
+  assert.equal(f.requests.length, 2); assert.equal(f.player.state, 'idle');
+  assert.equal(f.audio.paused, true);
+});
+
+test('a passage boundary does not restart an active connection or connect in phone-only mode', async () => {
+  for (const source of ['auto', 'browser']) {
+    const f = warmFixture(); f.config.source = source;
+    f.player.setText('First passage.\n\nSecond passage.'); f.player.play();
+    const connection = f.engine.connection;
+    f.spoken[0].onend(); await tick();
+    assert.equal(f.requests.length, source === 'auto' ? 1 : 0);
+    assert.equal(f.engine.connection, connection); assert.equal(f.spoken.length, 2);
+    f.player.stop();
+  }
+});
+
 test('cloud credentials retain case and symbols in voice and speech requests', async () => {
   const f = warmFixture();
   f.config.url = 'https://speech.example';
