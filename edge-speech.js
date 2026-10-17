@@ -5,7 +5,7 @@
     static validAccessKey(key) {
       return /^(?:[a-z]{4}|[A-Za-z0-9_-]{32,128})$/.test(key);
     }
-    constructor(native, config, report, audio, fetcher = fetch, timers = globalThis) {
+    constructor(native, config, report, audio, fetcher = (...args) => root.fetch(...args), timers = globalThis) {
       Object.assign(this, { native, config, report, audio, fetcher, timers });
       this.generation = 0;
       this.failed = false;
